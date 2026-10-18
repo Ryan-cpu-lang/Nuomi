@@ -3,7 +3,7 @@
  * env.c — 环境（作用域链）
  * 变量绑定保存在一个简单的动态数组里，沿 parent 链向上查找。
  */
-#include "mochi.h"
+#include "nuomi.h"
 
 Env* newEnv(Env* parent) {
     Env* e = (Env*)allocObj(sizeof(Env), OBJ_ENV);

@@ -1,9 +1,9 @@
 ; ============================================================
-;  Mochi 游戏合集  (Mochi Games Collection)
-;  说明：Mochi 当前没有 input / random 内置函数，所以本文件
+;  Nuomi 游戏合集  (Nuomi Games Collection)
+;  说明：Nuomi 当前没有 input / random 内置函数，所以本文件
 ;        1) 自带一个 LCG 伪随机数发生器 (rng-*)
 ;        2) 游戏均为"自动演示 / AI 对战"型，无需玩家输入
-;  运行：./mochi.exe samples/games.mochi
+;  运行：./nuomi.exe samples/games.nuomi
 ; ============================================================
 
 ; ---------- 伪随机数发生器 (LCG) ----------
@@ -27,7 +27,7 @@
     (set! i (+ i 1)))
   i)
 
-; 求两个数中较大的（Mochi 没有 max 内置）
+; 求两个数中较大的（Nuomi 没有 max 内置）
 (define (max a b)
   (if (> a b) a b))
 

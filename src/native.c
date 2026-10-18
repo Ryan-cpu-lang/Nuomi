@@ -2,7 +2,7 @@
 /*
  * native.c — 内置原生函数
  */
-#include "mochi.h"
+#include "nuomi.h"
 
 /* ---------- 算术 ---------- */
 static Value natAdd(int c, Value* a, Env* e) {

@@ -1,15 +1,15 @@
-# Mochi 语言规范（Language Specification）
+# Nuomi 语言规范（Language Specification）
 
 > **版本**：0.1（对齐当前树遍历解释器实现）
 > **定位**：一门用 C 从零实现的**极简 Lisp 风格**编程语言，最终目标产物为 novus-os 的 `.nuc` 原生可执行文件。
-> **权威性**：本文是 Mochi 语言的**权威规范**。当本规范与《Mochi 语言手册》等教程性文档冲突时，**以本规范为准**；教程可能滞后于实现。
+> **权威性**：本文是 Nuomi 语言的**权威规范**。当本规范与《Nuomi 语言手册》等教程性文档冲突时，**以本规范为准**；教程可能滞后于实现。
 > **范围**：词法结构、语法、数据类型、求值模型、特殊形式、内置函数、错误语义、表示法、已知限制。
 
 ---
 
 ## 1. 概述
 
-Mochi 源码即 **S-表达式（S-expression）**序列。程序由若干**形式（form）**组成，按书写顺序求值；最后一个形式的求值结果即整个程序的退出返回值（供宿主/REPL 使用）。解释器为**树遍历**式：读入源码 → 解析为值树（AST）→ 递归求值。
+Nuomi 源码即 **S-表达式（S-expression）**序列。程序由若干**形式（form）**组成，按书写顺序求值；最后一个形式的求值结果即整个程序的退出返回值（供宿主/REPL 使用）。解释器为**树遍历**式：读入源码 → 解析为值树（AST）→ 递归求值。
 
 设计原则：极简、词法直观、一切皆值、闭包 + 词法作用域、无宏/模块/异常（当前版本）。
 
@@ -250,7 +250,7 @@ number   := <可被 strtod 整体解析的令牌>
 - **EOF（输入耗尽，如管道/重定向结束）**：`input` 返回空串 `""`，`input-int` 返回 `0`。
 - **`input-int` 解析**：`strtol(…, 10)`，忽略前导空格/制表；`42`、` -7` 正常；`12abc` 取前缀 `12`；纯非数字/空 → `0`。
 - **行长上限**：内部缓冲 512 字节，单行超过约 511 字节会被拆成多次读取。
-- 这是 Mochi **首批输入类内置**，用于写交互程序（猜数字、文字冒险等）；脚本模式与 REPL 均可从 stdin 读取。
+- 这是 Nuomi **首批输入类内置**，用于写交互程序（猜数字、文字冒险等）；脚本模式与 REPL 均可从 stdin 读取。
 
 ---
 
@@ -294,22 +294,22 @@ quote  if  while  define  set!  lambda  begin  and  or
 
 ## 12. 最小完整示例
 
-```mochi
-; fib.mochi
+```nuomi
+; fib.nuomi
 (define (fib n)
   (if (< n 2)
       n
       (+ (fib (- n 1)) (fib (- n 2)))))
 (println (fib 10))          ; 输出 55
 
-; counter.mochi —— 闭包 + set! 计数器
+; counter.nuomi —— 闭包 + set! 计数器
 (define (make-counter)
   (define n 0)
   (lambda () (set! n (+ n 1)) n))
 (define c (make-counter))
 (println (c) (c) (c))               ; 1 2 3
 
-; vectors.mochi —— 向量字面量 / get / set / 相等性
+; vectors.nuomi —— 向量字面量 / get / set / 相等性
 (define v [10 20 30])
 (println (get v 0))                 ; 10
 (set v 1 99)
@@ -317,8 +317,8 @@ quote  if  while  define  set!  lambda  begin  and  or
 (println (equal? [1 2] [1 2]))      ; true
 (println (eq? v v))                 ; true
 
-; strings.mochi —— str 拼接（内容裸） vs println 显示（给字符串加引号）
-(println (equal? (str "Hi, " "Mochi") "Hi, Mochi"))  ; true（str 拼出内容 "Hi, Mochi"）
+; strings.nuomi —— str 拼接（内容裸） vs println 显示（给字符串加引号）
+(println (equal? (str "Hi, " "Nuomi") "Hi, Nuomi"))  ; true（str 拼出内容 "Hi, Nuomi"）
 (println "Hi")                                        ; "Hi"（println 给字符串加引号）
 ```
 
@@ -342,18 +342,18 @@ quote  if  while  define  set!  lambda  begin  and  or
 
 ## 14. 与 novus-os / NUC 的关系
 
-本规范描述**宿主解释器**（在 Linux/macOS/Windows 上读源码运行）的语言语义。Mochi 的目标产物是 novus-os 的 `.nuc` 原生可执行：
+本规范描述**宿主解释器**（在 Linux/macOS/Windows 上读源码运行）的语言语义。Nuomi 的目标产物是 novus-os 的 `.nuc` 原生可执行：
 
-- **运行**：`mochi 文件.mochi` 执行脚本；无参进入 REPL。
-- **编译（Route-A M2）**：`mochi -c 文件.mochi -o 输出.nuc` 支持 **整数运算 + 函数(可递归) + 局部变量 + if/while/begin + 比较** 的 x86_64 原生码（System V 调用约定；跨函数调用经 `R_X86_64_PC32` 重定位 + FUNC 符号表 §5/§7，由加载器装载期解析）。限制：无 字符串/向量/内置 I/O（novus 系统调用号表公布后以 `(syscall n ...)` 接入）；编译期布尔为 1/0；顶层 `define` 为编译期常量（不可 `set!`）；每函数 ≤6 参数、≤32 个局部槽。
+- **运行**：`nuomi 文件.nuomi` 执行脚本；无参进入 REPL。
+- **编译（Route-A M2）**：`nuomi -c 文件.nuomi -o 输出.nuc` 支持 **整数运算 + 函数(可递归) + 局部变量 + if/while/begin + 比较** 的 x86_64 原生码（System V 调用约定；跨函数调用经 `R_X86_64_PC32` 重定位 + FUNC 符号表 §5/§7，由加载器装载期解析）。限制：无 字符串/向量/内置 I/O（novus 系统调用号表公布后以 `(syscall n ...)` 接入）；编译期布尔为 1/0；顶层 `define` 为编译期常量（不可 `set!`）；每函数 ≤6 参数、≤32 个局部槽。
 - NUC 工具链 `nucutil`（`emit-demo` / `validate` / `dump` / `run`）跨 Windows/Linux/macOS。
 
 > 环境对齐示例（Linux + gcc）：
 > ```bash
-> make            # 生成 ./mochi 与 ./nucutil
+> make            # 生成 ./nuomi 与 ./nucutil
 > make test       # 冒烟：跑全部样例 + emit-demo/validate/run
 > ```
 
 ---
 
-*本文档随 Mochi 源码一同维护；实现变更须同步更新本规范。*
+*本文档随 Nuomi 源码一同维护；实现变更须同步更新本规范。*

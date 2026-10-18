@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0
-# tools/gen-icon.py -- 生成 Mochi 程序图标 mochi.ico（纯 Pillow，零 AI 成本）
-# 用法: python tools/gen-icon.py [输出.ico]   (默认输出 mochi.ico)
+# tools/gen-icon.py -- 生成 Nuomi 程序图标 nuomi.ico（纯 Pillow，零 AI 成本）
+# 用法: python tools/gen-icon.py [输出.ico]   (默认输出 nuomi.ico)
 # 设计: 圆角方块(靛→紫→粉 横向渐变) + 白色麻糬椭圆 + 小眼睛 + 粉腮红; 1024 超采样后 Lanczos 缩多尺寸。
 import sys
 from PIL import Image, ImageDraw
 
 S = 1024  # 超采样画布边长
-OUT = sys.argv[1] if len(sys.argv) > 1 else "mochi.ico"
+OUT = sys.argv[1] if len(sys.argv) > 1 else "nuomi.ico"
 
 def lerp(a, b, t):
     return tuple(int(round(a[i] + (b[i] - a[i]) * t)) for i in range(3))

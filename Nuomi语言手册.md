@@ -1,4 +1,4 @@
-# Mochi 语言手册（格式 + 代码参考）
+# Nuomi 语言手册（格式 + 代码参考）
 
 > 版本：0.1（树遍历解释器实现）
 > 定位：一门用 C 从零手撸的**极简 Lisp 风格**编程语言，产物最终要能打包成 novus-os 的 `.nuc` 原生可执行格式。
@@ -11,22 +11,22 @@
 ```bash
 # 编译（本机用绿色版 TCC 即可，无需安装）
 TCC=/c/Users/RAYN/AppData/Local/tcc/tcc/tcc.exe
-$TCC -Iinclude -O2 src/value.c src/reader.c src/env.c src/eval.c src/native.c src/main.c -o mochi.exe
+$TCC -Iinclude -O2 src/value.c src/reader.c src/env.c src/eval.c src/native.c src/main.c -o nuomi.exe
 
 # 跑一个脚本文件
-./mochi.exe samples/factorial.mochi
+./nuomi.exe samples/factorial.nuomi
 
 # 进入 REPL（逐行输入表达式回车求值，Ctrl+Z 回车或 Ctrl+C 退出）
-./mochi.exe
+./nuomi.exe
 ```
 
-> 注：`nucutil.exe` 是配套的 **NUC 格式工具链**（生成/解析/校验/转储 `.nuc`），与 Mochi 解释器是两个独立程序。
+> 注：`nucutil.exe` 是配套的 **NUC 格式工具链**（生成/解析/校验/转储 `.nuc`），与 Nuomi 解释器是两个独立程序。
 
 ---
 
 ## 2. 词法格式（Lexical Format）
 
-Mochi 的源码就是一堆 **S-表达式（S-expression）**，整体长得像 Lisp。
+Nuomi 的源码就是一堆 **S-表达式（S-expression）**，整体长得像 Lisp。
 
 | 元素 | 写法 | 说明 |
 |------|------|------|
@@ -65,25 +65,25 @@ Mochi 的源码就是一堆 **S-表达式（S-expression）**，整体长得像 
 特殊形式是“关键字”，它们的参数**不会**被默认先求值。
 
 ### `quote` — 原样返回
-```mochi
+```nuomi
 (quote (+ 1 2))     ; => 返回列表 (+ 1 2)，不会去算 3
 '(1 2 3)             ; => 列表数据 (1 2 3)
 ```
 
 ### `define` — 定义变量或函数
-```mochi
+```nuomi
 (define x 10)                 ; 定义变量
 (define (add a b) (+ a b))    ; 定义函数（第一个参数是 (函数名 形参...)）
 (add 3 4)                     ; => 7
 ```
 
 ### `if` — 条件分支
-```mochi
+```nuomi
 (if (< x 0) "负" "非负")      ; 第三个（else）分支可省略，省略时返回 nil
 ```
 
 ### `while` — 循环
-```mochi
+```nuomi
 (define i 0)
 (while (< i 3)
   (println i)
@@ -91,18 +91,18 @@ Mochi 的源码就是一堆 **S-表达式（S-expression）**，整体长得像 
 ```
 
 ### `begin` — 顺序求值，返回最后一个
-```mochi
+```nuomi
 (begin (println "a") (println "b") 99)   ; 依次执行，最终值 99
 ```
 
 ### `set!` — 修改已有绑定（变量必须已 define，否则报 `unbound variable`）
-```mochi
+```nuomi
 (define count 0)
 (set! count (+ count 1))      ; count 变成 1
 ```
 
 ### `lambda` — 构造匿名函数（闭包）
-```mochi
+```nuomi
 (define make-adder
   (lambda (n)
     (lambda (x) (+ x n))))    ; 内层闭包捕获了外层变量 n
@@ -111,7 +111,7 @@ Mochi 的源码就是一堆 **S-表达式（S-expression）**，整体长得像 
 ```
 
 ### `and` / `or` — 短路逻辑
-```mochi
+```nuomi
 (and true (< 1 2) "ok")       ; => "ok"（真到最后一个）
 (or false nil 42)              ; => 42（遇到第一个真值即返回）
 ```
@@ -120,7 +120,7 @@ Mochi 的源码就是一堆 **S-表达式（S-expression）**，整体长得像 
 
 ## 5. 内置函数（Built-in Functions）
 
-> 参数里的“值”可以是任意 Mochi 值。除非特别说明，函数都**支持不定个数参数**。
+> 参数里的“值”可以是任意 Nuomi 值。除非特别说明，函数都**支持不定个数参数**。
 
 ### 5.1 算术
 | 函数 | 语义 | 示例 |
@@ -178,7 +178,7 @@ Mochi 的源码就是一堆 **S-表达式（S-expression）**，整体长得像 
 ### 5.7 字符串
 | 函数 | 语义 | 示例 |
 |------|------|------|
-| `(str a b …)` | 把各参数的字符串表示**拼接**成一个字符串 | `(str "Hello, " "Mochi" "!")` => `"Hello, Mochi!"` |
+| `(str a b …)` | 把各参数的字符串表示**拼接**成一个字符串 | `(str "Hello, " "Nuomi" "!")` => `"Hello, Nuomi!"` |
 | `(get s i)` | 取字符串第 `i` 个字符（返回长度 1 的字符串） | `(get "abc" 0)` => `"a"` |
 | `(length s)` | 字符串字符数 | `(length "abc")` => `3` |
 
@@ -197,20 +197,20 @@ Mochi 的源码就是一堆 **S-表达式（S-expression）**，整体长得像 
 
 | 文件 | 演示点 |
 |------|--------|
-| `factorial.mochi` | 递归 + 算术（`fact(10)` => `3628800`） |
-| `fib.mochi` | 递归斐波那契（`fib(20)` => `6765`） |
-| `closures.mochi` | 闭包 / 高阶函数 |
-| `vectors.mochi` | 向量字面量、`get` / `set` / `length` |
-| `while.mochi` | `while` 循环累加（`sum 0..99` => `4950`） |
-| `strings.mochi` | `str` 拼接与字符串处理 |
-| `logic.mochi` | `and` / `or` / `not` / 比较 |
-| `lists.mochi` | `list` / `car` / `cdr` / `nth` 链表操作 |
+| `factorial.nuomi` | 递归 + 算术（`fact(10)` => `3628800`） |
+| `fib.nuomi` | 递归斐波那契（`fib(20)` => `6765`） |
+| `closures.nuomi` | 闭包 / 高阶函数 |
+| `vectors.nuomi` | 向量字面量、`get` / `set` / `length` |
+| `while.nuomi` | `while` 循环累加（`sum 0..99` => `4950`） |
+| `strings.nuomi` | `str` 拼接与字符串处理 |
+| `logic.nuomi` | `and` / `or` / `not` / 比较 |
+| `lists.nuomi` | `list` / `car` / `cdr` / `nth` 链表操作 |
 
 ---
 
 ## 8. 与 NUC 格式的关系（重要背景）
 
-Mochi 当前是**解释器**（在宿主机上读源码运行）。它的**最终目标产物**是 novus-os 的 `.nuc` 原生可执行文件，由 NUC 工具链（`nucutil`）生成。`nucutil` 支持的命令：
+Nuomi 当前是**解释器**（在宿主机上读源码运行）。它的**最终目标产物**是 novus-os 的 `.nuc` 原生可执行文件，由 NUC 工具链（`nucutil`）生成。`nucutil` 支持的命令：
 
 ```bash
 ./nucutil.exe emit-demo demo.nuc   # 生成一个带 PC32 重定位的最小示例 .nuc
@@ -219,7 +219,7 @@ Mochi 当前是**解释器**（在宿主机上读源码运行）。它的**最�
 ./nucutil.exe run       demo.nuc   # （仅 Windows）真机加载并执行，验证返回 42
 ```
 
-> 让 Mochi 真正编译成能在 novus-os 跑的 `.nuc`，有两条候选后端路线待定：
+> 让 Nuomi 真正编译成能在 novus-os 跑的 `.nuc`，有两条候选后端路线待定：
 > **A** 直接生成 x86_64 机器码塞进 `.text` 段（对齐 novus-os 的 syscall/cppcc ABI）；
 > **B** 内嵌一个字节码 VM，字节码放 `.data`，VM 本身由 cppcc 编成 `.nuc` 作为运行时。
 
@@ -237,8 +237,8 @@ Mochi 当前是**解释器**（在宿主机上读源码运行）。它的**最�
 
 ## 10. 最小上手示例
 
-```mochi
-; hello.mochi
+```nuomi
+; hello.nuomi
 (define (fact n)
   (if (= n 0)
       1
@@ -250,5 +250,5 @@ Mochi 当前是**解释器**（在宿主机上读源码运行）。它的**最�
 (println "sum =" (+ (get v 0) (get v 4)))   ; 输出 sum = 6
 
 (define greet (lambda (name) (str "Hi, " name)))
-(println (greet "Mochi"))                    ; 输出 Hi, Mochi
+(println (greet "Nuomi"))                    ; 输出 Hi, Nuomi
 ```

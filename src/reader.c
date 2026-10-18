@@ -3,7 +3,7 @@
  * reader.c — 读取器：把源码解析成 Value 组成的 AST
  * 支持： () 列表、[] 向量、' 引号缩写、; 行注释、数字、字符串、符号
  */
-#include "mochi.h"
+#include "nuomi.h"
 
 static void rErr(Reader* r, const char* m) { r->error = true; r->errmsg = m; }
 

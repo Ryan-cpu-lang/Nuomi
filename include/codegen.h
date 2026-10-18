@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * codegen.h — Mochi → NUC 原生可执行文件 的 x86_64 代码生成（后端路线 A）
+ * codegen.h — Nuomi → NUC 原生可执行文件 的 x86_64 代码生成（后端路线 A）
  *
  * 里程碑 1（当前）：仅支持「整数算术子集」——
  *   - 整数字面量
@@ -12,12 +12,12 @@
  *
  * 调用方负责 free(*out)。
  */
-#ifndef MOCHI_CODEGEN_H
-#define MOCHI_CODEGEN_H
+#ifndef NUOMI_CODEGEN_H
+#define NUOMI_CODEGEN_H
 #include <stddef.h>
 #include <stdint.h>
 
-int mochi_compile_to_nuc(const char* src, uint8_t** out, size_t* out_size,
+int nuomi_compile_to_nuc(const char* src, uint8_t** out, size_t* out_size,
                          char* err, size_t errlen);
 
-#endif /* MOCHI_CODEGEN_H */
+#endif /* NUOMI_CODEGEN_H */

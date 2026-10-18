@@ -1,11 +1,11 @@
-# Mochi —— 一门纯 C 制作的极简编程语言 + NUC 工具链
+# Nuomi —— 一门纯 C 制作的极简编程语言 + NUC 工具链
 
-Mochi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从零实现（树遍历解释器 + 引用计数 GC）。
+Nuomi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从零实现（树遍历解释器 + 引用计数 GC）。
 本仓库同时包含 **NUC 可执行二进制格式（novus-os）** 的读写 / 校验 / dump 工具链，方便把它接入你自己的系统。
 
 > NUC 规范基准：<https://github.com/chen-xin-Liam/novus-os/blob/main/docs/NUC%20%E5%8F%AF%E6%89%A7%E8%A1%8C%E4%BA%8C%E8%BF%9B%E5%88%B6%E6%A0%BC%E5%BC%8F%E8%A7%84%E8%8C%83%20V1.0.md>
 >
-> 📖 语言文档：[`docs/Mochi语言规范.md`](docs/Mochi语言规范.md)（**权威规范**，冲突以此为准） ｜ [`Mochi语言手册.md`](Mochi语言手册.md)（上手教程）
+> 📖 语言文档：[`docs/Nuomi语言规范.md`](docs/Nuomi语言规范.md)（**权威规范**，冲突以此为准） ｜ [`Nuomi语言手册.md`](Nuomi语言手册.md)（上手教程）
 
 ---
 
@@ -16,9 +16,9 @@ Mochi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从�
 ### 🪟 Windows
 
 1. 下载本仓库（Code → Download ZIP，或 `git clone`）
-2. 双击 **`build.bat`**（自动探测 clang / gcc / 绿色版 TCC）→ 得到 `mochi.exe` + `nucutil.exe`
+2. 双击 **`build.bat`**（自动探测 clang / gcc / 绿色版 TCC）→ 得到 `nuomi.exe` + `nucutil.exe`
 3. 双击 **`run-guess.bat`** 玩猜数字、**`run-games.bat`** 看游戏合集
-4. （可选）双击 **`make-shortcuts.bat`** 生成带 Mochi 图标的快捷方式
+4. （可选）双击 **`make-shortcuts.bat`** 生成带 Nuomi 图标的快捷方式
 
 ### 🖥️ Novus OS（诺维斯）
 
@@ -32,14 +32,14 @@ Mochi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从�
 | [`sum.nuc`](dist/novus/sum.nuc) | while 循环求和 0..99 | 4950 |
 
 - 详见 [`dist/novus/README.md`](dist/novus/README.md)（校验 / 重新编译方法）
-- 自编程序：宿主机上 `mochi -c 程序.mochi -o 程序.nuc`
+- 自编程序：宿主机上 `nuomi -c 程序.nuomi -o 程序.nuc`
 - ⚠️ 编译子集暂无 I/O（待 novus 系统调用号表公布）
 
 ### 🐧 Linux
 
 ```bash
-git clone https://github.com/Ryan-cpu-lang/mochi.git && cd mochi
-make          # 需要 gcc + make，产出 mochi 与 nucutil
+git clone https://github.com/Ryan-cpu-lang/nuomi.git && cd nuomi
+make          # 需要 gcc + make，产出 nuomi 与 nucutil
 make test     # 冒烟：全部样例 + NUC 流水线
 ```
 （或 `./test-linux.sh` 一键）
@@ -52,7 +52,7 @@ make test     # 冒烟：全部样例 + NUC 流水线
 
 ```
 .
-├── include/             # mochi.h / nucfmt.h / codegen.h
+├── include/             # nuomi.h / nucfmt.h / codegen.h
 ├── src/
 │   ├── value.c          # 引用计数 GC、字符串驻留、值打印
 │   ├── reader.c         # 读取器（S 表达式 / 向量 / 引号）
@@ -60,13 +60,13 @@ make test     # 冒烟：全部样例 + NUC 流水线
 │   ├── eval.c           # 求值器、特殊形式、闭包、apply
 │   ├── native.c         # 内置原生函数（含 input / input-int）
 │   ├── main.c           # REPL / 脚本执行 / -c 编译模式
-│   ├── codegen.c        # Route-A 编译后端（Mochi 子集 → x86_64 → .nuc）
+│   ├── codegen.c        # Route-A 编译后端（Nuomi 子集 → x86_64 → .nuc）
 │   ├── nucfmt.c         # NUC 格式：构建 / 解析 / 校验 / dump
 │   └── nucutil.c        # NUC 命令行工具（emit/validate/dump/run）
-├── samples/             # Mochi 示例程序（.mochi，可解释运行）
+├── samples/             # Nuomi 示例程序（.nuomi，可解释运行）
 ├── dist/novus/          # 预编译示例 .nuc（诺维斯渠道）+ 源码
 ├── tools/               # gen-icon.py / make-shortcuts.ps1
-├── docs/                # Mochi 语言规范（权威）
+├── docs/                # Nuomi 语言规范（权威）
 ├── Makefile             # Linux/macOS 构建（make / make test）
 ├── build.bat            # Windows 一键构建
 ├── run-games.bat        # 双击：游戏合集
@@ -81,28 +81,28 @@ make test     # 冒烟：全部样例 + NUC 流水线
 
 ```bash
 # Linux / macOS / 有 make 的环境
-make            # 产出 mochi 与 nucutil
+make            # 产出 nuomi 与 nucutil
 
 # Windows（没有 make 也行）
 build.bat       # 自动找 clang，找不到再用 gcc
 ```
 
-## 3. 用 Mochi 语言
+## 3. 用 Nuomi 语言
 
 **REPL：**
 ```bash
-./mochi
-mochi> (+ 1 2 3)
+./nuomi
+nuomi> (+ 1 2 3)
 => 6
-mochi> (define (sq x) (* x x))
+nuomi> (define (sq x) (* x x))
 => <fn sq>
-mochi> (sq 9)
+nuomi> (sq 9)
 => 81
 ```
 
 **跑脚本：**
 ```bash
-./mochi samples/factorial.mochi
+./nuomi samples/factorial.nuomi
 # fact(10) = 3628800
 ```
 
@@ -164,13 +164,13 @@ Header(48) → SegmentTable → SymbolTable → RelocationTable → StringTable 
 
 `emit-demo` 产出的 `demo.nuc`：`.text` 里 `call main` 用 `R_X86_64_PC32` 重定位，加载器解析后跳到 `main`（`mov eax,0x2A; ret`），所以执行返回 42——这同时验证了 **格式生成 → 重定位 → 真机执行** 全链路。
 
-## 5. 下一步：让 Mochi 真正产出 NUC 运行在 novus-os
+## 5. 下一步：让 Nuomi 真正产出 NUC 运行在 novus-os
 
-目前 Mochi 是**解释执行**（在宿主上直接跑源码），`nucutil` 负责 **NUC 格式本身**。
-要让 Mochi 程序作为 `.nuc` 在 novus-os 上跑，需要做编译后端，两条路线：
+目前 Nuomi 是**解释执行**（在宿主上直接跑源码），`nucutil` 负责 **NUC 格式本身**。
+要让 Nuomi 程序作为 `.nuc` 在 novus-os 上跑，需要做编译后端，两条路线：
 
-- **路线 A（原生代码生成）**：把 Mochi 直接编译成 x86_64 机器码塞进 `.text`，对齐你们 `cppcc` 的 syscall ABI。最贴近原生、性能最好，但工作量最大（寄存器分配、指令选择、系统调用）。
-- **路线 B（内嵌字节码 VM）**：把 Mochi 编译成紧凑字节码，把一个小型字节码解释器（用 C 写、由 `cppcc` 编成 `.nuc`）作为运行时，字节码放进 `.data`，入口跳到 VM。实现快、可移植，先让语言在系统上跑起来。
+- **路线 A（原生代码生成）**：把 Nuomi 直接编译成 x86_64 机器码塞进 `.text`，对齐你们 `cppcc` 的 syscall ABI。最贴近原生、性能最好，但工作量最大（寄存器分配、指令选择、系统调用）。
+- **路线 B（内嵌字节码 VM）**：把 Nuomi 编译成紧凑字节码，把一个小型字节码解释器（用 C 写、由 `cppcc` 编成 `.nuc`）作为运行时，字节码放进 `.data`，入口跳到 VM。实现快、可移植，先让语言在系统上跑起来。
 
 告诉我你们倾向哪条路线，我接着往下做。
 
@@ -180,7 +180,7 @@ Header(48) → SegmentTable → SymbolTable → RelocationTable → StringTable 
 - 数字统一用 `double`。
 - `nucutil run` 仅在 Windows x86_64 上做真机执行验证；其它平台只能 `dump`/`validate`。
 
-## 7. 作为 novus-os 模块接入（user/mochi/ + tools/nucutil/）
+## 7. 作为 novus-os 模块接入（user/nuomi/ + tools/nucutil/）
 
 本仓库目标作为 novus-os 的用户态语言模块合入官方仓库，遵循其 GPLv2 + Kbuild/Makefile 模块化惯例。
 
@@ -188,7 +188,7 @@ Header(48) → SegmentTable → SymbolTable → RelocationTable → StringTable 
 
 | 本仓库内容 | 合入 novus-os 的位置 | 说明 |
 |------------|----------------------|------|
-| `src/*.c` `include/mochi.h` `samples/` `Makefile` `Kconfig` `LICENSE` | `user/mochi/` | Mochi 编译器 + 运行时（用户态 `.nuc` 生产者） |
+| `src/*.c` `include/nuomi.h` `samples/` `Makefile` `Kconfig` `LICENSE` | `user/nuomi/` | Nuomi 编译器 + 运行时（用户态 `.nuc` 生产者） |
 | `src/nucfmt.c` `src/nucutil.c` `include/nucfmt.h` | `tools/nucutil/` | 主机端 NUC 格式工具（构建期用） |
 
 > 注意：`nucfmt`（NUC 格式库）被**编译器（codegen）和 nucutil 共用**。
@@ -197,7 +197,7 @@ Header(48) → SegmentTable → SymbolTable → RelocationTable → StringTable 
 
 ### 7.2 接线方式（给 novus-os 维护者）
 
-1. 顶层 `Makefile` 的子目录列表里加入 `user/mochi` 与 `tools/nucutil`；
+1. 顶层 `Makefile` 的子目录列表里加入 `user/nuomi` 与 `tools/nucutil`；
 2. 对应 `Kconfig` 里 `source` 本目录的 `Kconfig`（见本仓库 `Kconfig`）；
 3. 构建：`make`（交叉编译 `CROSS_COMPILE=x86_64-elf-`，默认 `gcc`）。
 
@@ -207,7 +207,7 @@ Header(48) → SegmentTable → SymbolTable → RelocationTable → StringTable 
 - 但**冻结的 NUC 规范 V1.0**（唯一基准文档）明确：`.text` 段装的是 **x86_64 原生机器码**，
   重定位类型是 `R_X86_64_32` / `R_X86_64_PC32`，加载流程是"上下文切换到用户态，跳转 entry_rip"。
 
-两者自相矛盾。Mochi 后端目前按**规范**走原生机器码（Route A，x86_64 直编 `.text`），
+两者自相矛盾。Nuomi 后端目前按**规范**走原生机器码（Route A，x86_64 直编 `.text`），
 已验证算术用例全对。合入前请系统制作人拍板：内核加载器到底执行原生码还是字节码，
 以免我们对齐错方向。
 

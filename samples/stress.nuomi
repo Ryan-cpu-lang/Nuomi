@@ -1,4 +1,4 @@
-; stress.mochi — 故意制造大量「共享对象」场景，逼出引用计数 bug
+; stress.nuomi — 故意制造大量「共享对象」场景，逼出引用计数 bug
 ; 这些场景在修复前会偶发 use-after-free / 符号丢失。
 
 (define shared 'sym)            ; 共享符号

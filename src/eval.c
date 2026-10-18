@@ -3,7 +3,7 @@
  * eval.c — 求值器
  * 树遍历解释执行；特殊形式：quote/if/while/define/set!/lambda/begin/and/or
  */
-#include "mochi.h"
+#include "nuomi.h"
 
 bool isFalsey(Value v) {
     return IS_NIL(v) || (IS_BOOL(v) && !AS_BOOL(v));
@@ -64,7 +64,7 @@ static Value evalDefine(Value args, Env* env) {
     if (IS_OBJ(target) && AS_OBJ(target)->type == OBJ_STRING) {
         ObjString* name = (ObjString*)AS_OBJ(target);
         Value val = evalValue(listCar(listCdr(args)), env);
-#ifdef MOCHI_DEBUG
+#ifdef NUOMI_DEBUG
         fprintf(stderr, "  [define] %s -> val seq=%lu objtype=%d (0=list,3=fn,5=native)\n",
                 name->chars,
                 (IS_OBJ(val) ? AS_OBJ(val)->dbgSeq : 0),
@@ -216,7 +216,7 @@ static Value evalListNode(Value listv, Env* env) {
 }
 
 Value evalValue(Value node, Env* env) {
-#ifdef MOCHI_DEBUG
+#ifdef NUOMI_DEBUG
     if (IS_OBJ(node)) {
         Obj* o = AS_OBJ(node);
         if (o->type == OBJ_LIST) {
@@ -288,7 +288,7 @@ ObjFunction* makeClosure(ObjString* name, Value paramList, Value body, Env* env)
 /* 调用函数或原生函数 */
 Value apply(Value callee, Value* argv, int argc, Env* env) {
     (void)env;
-#ifdef MOCHI_DEBUG
+#ifdef NUOMI_DEBUG
     if (IS_OBJ(callee)) {
         Obj* co = AS_OBJ(callee);
         const char* nm = "?";
@@ -301,7 +301,7 @@ Value apply(Value callee, Value* argv, int argc, Env* env) {
 #endif
     if (IS_OBJ(callee) && AS_OBJ(callee)->type == OBJ_NATIVE) {
         Value r = ((ObjNative*)AS_OBJ(callee))->fn(argc, argv, env);
-#ifdef MOCHI_DEBUG
+#ifdef NUOMI_DEBUG
         fprintf(stderr, "  [apply] native returned objtype=%d (0=list)\n", IS_OBJ(r) ? (int)AS_OBJ(r)->type : -1);
 #endif
         return r;
@@ -328,7 +328,7 @@ Value apply(Value callee, Value* argv, int argc, Env* env) {
         }
         g_dbg_phase = "apply-func-release-env";
         release(OBJ_VAL(callEnv));
-#ifdef MOCHI_DEBUG
+#ifdef NUOMI_DEBUG
         fprintf(stderr, "  [apply] func returned type=%d\n", (int)result.type);
 #endif
         return result;

@@ -1,14 +1,14 @@
 # Novus 渠道：预编译示例 .nuc
 
-这些是 **Mochi 编译器（Route-A M2）** 产出的、符合《NUC 可执行二进制格式规范 V1.0》的示例程序，
+这些是 **Nuomi 编译器（Route-A M2）** 产出的、符合《NUC 可执行二进制格式规范 V1.0》的示例程序，
 可直接交给 novus-os 加载执行（shell 的 exec / `sys_nuc_exec`）。
 
 | 文件 | 源码 | 功能 | 入口返回值（rax） |
 |---|---|---|---|
-| `demo.nuc` | [src/demo.mochi](src/demo.mochi) | 算术演示 | 142 |
-| `fact.nuc` | [src/fact.mochi](src/fact.mochi) | 递归阶乘 fact(10) | 3628800 |
-| `fib.nuc`  | [src/fib.mochi](src/fib.mochi)  | 双递归斐波那契 fib(10) | 55 |
-| `sum.nuc`  | [src/sum.mochi](src/sum.mochi)  | while 循环求和 0..99 | 4950 |
+| `demo.nuc` | [src/demo.nuomi](src/demo.nuomi) | 算术演示 | 142 |
+| `fact.nuc` | [src/fact.nuomi](src/fact.nuomi) | 递归阶乘 fact(10) | 3628800 |
+| `fib.nuc`  | [src/fib.nuomi](src/fib.nuomi)  | 双递归斐波那契 fib(10) | 55 |
+| `sum.nuc`  | [src/sum.nuomi](src/sum.nuomi)  | while 循环求和 0..99 | 4950 |
 
 ## 校验（宿主机上）
 
@@ -21,7 +21,7 @@ nucutil run     demo.nuc    # 宿主加载执行，打印入口返回值
 ## 重新编译
 
 ```bash
-mochi -c src/fact.mochi -o fact.nuc
+nuomi -c src/fact.nuomi -o fact.nuc
 ```
 
 ## 格式说明

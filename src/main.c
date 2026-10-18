@@ -2,7 +2,7 @@
 /*
  * main.c — 程序入口：REPL、脚本执行、以及编译模式（-c 输出 NUC 原生文件）
  */
-#include "mochi.h"
+#include "nuomi.h"
 #include "codegen.h"
 
 #ifdef _WIN32
@@ -40,7 +40,7 @@ void runFile(const char* path, Env* global) {
         Value res = evalValue(form, global);
         g_dbg_phase = "runFile-release-res";
         release(res);
-#ifdef MOCHI_DEBUG
+#ifdef NUOMI_DEBUG
         fprintf(stderr, "  [runFile] release(form) seq=%lu\n", IS_OBJ(form) ? AS_OBJ(form)->dbgSeq : 0);
 #endif
         g_dbg_phase = "runFile-release-form";
@@ -53,9 +53,9 @@ void repl(Env* global) {
     char* buf = NULL;
     size_t buflen = 0, bufcaps = 0;
     char line[8192];
-    printf("Mochi 0.1 — 输入表达式回车求值，Ctrl+Z 回车 或 Ctrl+C 退出\n");
+    printf("Nuomi 0.1 — 输入表达式回车求值，Ctrl+Z 回车 或 Ctrl+C 退出\n");
     for (;;) {
-        printf("mochi> ");
+        printf("nuomi> ");
         fflush(stdout);
         if (!fgets(line, sizeof(line), stdin)) break;
         size_t ll = strlen(line);
@@ -106,7 +106,7 @@ int main(int argc, char** argv) {
     Env* global = newEnv(NULL);
     registerNatives(global);
 
-    /* 解析参数：编译模式 mochi -c <in> -o <out.nuc> */
+    /* 解析参数：编译模式 nuomi -c <in> -o <out.nuc> */
     bool compileMode = false;
     const char* inPath = NULL;
     const char* outPath = NULL;
@@ -117,7 +117,7 @@ int main(int argc, char** argv) {
     }
 
     if (compileMode) {
-        if (!inPath) { fprintf(stderr, "compile mode needs an input file: mochi -c <in.mochi> -o <out.nuc>\n"); return 1; }
+        if (!inPath) { fprintf(stderr, "compile mode needs an input file: nuomi -c <in.nuomi> -o <out.nuc>\n"); return 1; }
         FILE* f = fopen(inPath, "rb");
         if (!f) { fprintf(stderr, "cannot open %s\n", inPath); return 1; }
         fseek(f, 0, SEEK_END); long sz = ftell(f); fseek(f, 0, SEEK_SET);
@@ -126,7 +126,7 @@ int main(int argc, char** argv) {
         src[sz] = '\0'; fclose(f);
 
         uint8_t* blob = NULL; size_t n = 0; char err[256];
-        int rc = mochi_compile_to_nuc(src, &blob, &n, err, sizeof err);
+        int rc = nuomi_compile_to_nuc(src, &blob, &n, err, sizeof err);
         free(src);
         if (rc != 0) { fprintf(stderr, "compile failed: %s\n", err); return 1; }
 
@@ -146,7 +146,7 @@ int main(int argc, char** argv) {
         repl(global);
     }
 
-#ifdef MOCHI_DEBUG
+#ifdef NUOMI_DEBUG
     fprintf(stderr, "=== main: release(global) ===\n");
 #endif
     g_dbg_phase = "main-release-global";

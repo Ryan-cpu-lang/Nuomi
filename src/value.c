@@ -2,7 +2,7 @@
 /*
  * value.c — 值的内存管理（引用计数 + 全局注册表）、字符串驻留、值打印
  */
-#include "mochi.h"
+#include "nuomi.h"
 
 /* ====================== 全局注册表 ====================== */
 static Obj* g_objects = NULL;
@@ -13,9 +13,9 @@ const char* g_dbg_phase = "start";
 static void registerObj(Obj* o) { o->next = g_objects; g_objects = o; }
 
 /* ====================== 调试：对象存活检查 ====================== */
-/* 编译时加 -DMOCHI_DEBUG 开启：用「存活集合」捕获释放后再次访问
+/* 编译时加 -DNUOMI_DEBUG 开启：用「存活集合」捕获释放后再次访问
    (use-after-free) / 重复释放这类引用计数 bug，直接 abort 并报类型。 */
-#ifdef MOCHI_DEBUG
+#ifdef NUOMI_DEBUG
 #include <stdint.h>
 #define LIVE_CAP 16384
 static Obj* g_live[LIVE_CAP];
@@ -45,7 +45,7 @@ static void liveRemove(Obj* o) {
 }
 static void dbgCheckLive(Obj* o, const char* where) {
     if (o && !liveContains(o)) {
-        fprintf(stderr, "MOCHI_DEBUG: %s @ '%s' on object NOT LIVE type=%d seq=%lu @%p ",
+        fprintf(stderr, "NUOMI_DEBUG: %s @ '%s' on object NOT LIVE type=%d seq=%lu @%p ",
                 where, g_dbg_phase, (int)o->type, o->dbgSeq, (void*)o);
         if (o->type == OBJ_STRING) {
             ObjString* s = (ObjString*)o;
@@ -65,7 +65,7 @@ Obj* allocObj(size_t size, ObjType type) {
     o->type = type;
     o->refcount = 1;          /* 调用方立即获得 1 个引用 */
     registerObj(o);
-#ifdef MOCHI_DEBUG
+#ifdef NUOMI_DEBUG
     static unsigned long g_seq = 0;
     o->dbgSeq = ++g_seq;
     liveAdd(o);
@@ -83,7 +83,7 @@ void release(Value v) {
     if (!IS_OBJ(v)) return;
     Obj* o = AS_OBJ(v);
     dbgCheckLive(o, "release");
-#ifdef MOCHI_DEBUG
+#ifdef NUOMI_DEBUG
     fprintf(stderr, "  [release] @%p rc=%d\n", (void*)o, o->refcount);
 #endif
     if (o->refcount <= 0) return;
@@ -93,7 +93,7 @@ void release(Value v) {
 
 static void freeObject(Obj* o) {
     /* 调试：标记已进入释放，若再次被访问即 use-after-free */
-#ifdef MOCHI_DEBUG
+#ifdef NUOMI_DEBUG
     liveRemove(o);
     if (o->type == OBJ_LIST) {
         ObjList* l = (ObjList*)o;

@@ -1,10 +1,10 @@
 ; ============================================================
 ;  猜数字 · 真能玩版（你敲数字，猜电脑想的数）
-;  运行：mochi.exe samples/guess-play.mochi
-;  依赖：Mochi 的 input-int 内置（读取键盘输入）
+;  运行：nuomi.exe samples/guess-play.nuomi
+;  依赖：Nuomi 的 input-int 内置（读取键盘输入）
 ; ============================================================
 
-; --- 简单 LCG 伪随机（Mochi 没有 random 内置）---
+; --- 简单 LCG 伪随机（Nuomi 没有 random 内置）---
 (define rng-state 13579)
 (define (rng-step)
   (set! rng-state (% (+ (* rng-state 1103515245) 12345) 2147483648))

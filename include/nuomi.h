@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * mochi.h — Mochi 语言解释器公共头文件
+ * nuomi.h — Nuomi 语言解释器公共头文件
  * 一门用 C 从零手撸的极简 Lisp 风格编程语言。
  */
-#ifndef MOCHI_H
-#define MOCHI_H
+#ifndef NUOMI_H
+#define NUOMI_H
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -54,7 +54,7 @@ struct Obj {
     ObjType type;
     int refcount;
     struct Obj* next;       /* 全局注册表，仅用于退出时彻底释放 */
-#ifdef MOCHI_DEBUG
+#ifdef NUOMI_DEBUG
     unsigned long dbgSeq;   /* 分配序号，调试用 */
 #endif
 };
@@ -161,4 +161,4 @@ void registerNatives(Env* g);
 void repl(Env* global);
 void runFile(const char* path, Env* global);
 
-#endif /* MOCHI_H */
+#endif /* NUOMI_H */

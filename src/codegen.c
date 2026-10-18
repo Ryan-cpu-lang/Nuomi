@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * codegen.c — Route-A 编译后端：Mochi 子集 → x86_64 机器码 → NUC 文件
+ * codegen.c — Route-A 编译后端：Nuomi 子集 → x86_64 机器码 → NUC 文件
  *
  * M2 里程碑：整数 + 函数(可递归) + 局部变量 + if/while/begin + 比较 + 跨函数调用。
  *
@@ -16,7 +16,7 @@
  * 公布后加 (syscall n ...) 即可）；布尔用 1/0（0=假）；while 返回循环结果；
  * 最多 6 参数；每函数最多 16 个局部槽；顶层 define 为编译期常量（不可 set!）。
  */
-#include "mochi.h"
+#include "nuomi.h"
 #include "nucfmt.h"
 #include <stdlib.h>
 #include <string.h>
@@ -419,7 +419,7 @@ static bool fold_const(CG* c, Value node, int64_t* out) {
     return false;
 }
 
-int mochi_compile_to_nuc(const char* src, uint8_t** out, size_t* out_size, char* err, size_t errlen) {
+int nuomi_compile_to_nuc(const char* src, uint8_t** out, size_t* out_size, char* err, size_t errlen) {
     if (err && errlen) err[0] = '\0';
     Reader r;
     r.src = src; r.len = strlen(src); r.pos = 0; r.error = false; r.done = false; r.errmsg = NULL;
