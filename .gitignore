@@ -3,6 +3,9 @@
 *.o
 *.obj
 mochi_dbg.exe
+# make 在 Linux/macOS 上产出的无后缀二进制（勿提交）
+/mochi
+/nucutil
 
 # ===== 测试/中间产物 =====
 *.nuc

@@ -37,7 +37,12 @@ typedef struct {
 #define NIL_VAL     ((Value){VAL_NIL, {0}})
 #define BOOL_VAL(b) ((Value){VAL_BOOL, {.boolean = (b)}})
 #define NUM_VAL(n)  ((Value){VAL_NUMBER, {.number = (n)}})
-#define OBJ_VAL(o)  ((Value){VAL_OBJ, {.obj = (o)}})
+/* The cast is not decoration. Callers pass typed pointers - ObjString *,
+ * Env *, ObjList * - and every one of those types starts with an Obj, but
+ * a compiler that has been told to treat pointer mismatches as errors
+ * refuses the assignment without it. The union member is Obj *; the
+ * objects are all reachable through it by the layout above. */
+#define OBJ_VAL(o)  ((Value){VAL_OBJ, {.obj = (Obj *)(o)}})
 
 /* ====================== 对象 (Obj) ====================== */
 

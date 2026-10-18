@@ -5,21 +5,28 @@
 CC ?= gcc
 CFLAGS ?= -O2 -Wall -Wextra -Iinclude
 
-# 解释器 mochi 也内含编译后端(codegen.c)与 NUC 读写(nucfmt.c)，必须一起链接。
+# nucfmt.c 是共享的 NUC 格式库：编译器用它写、宿主工具用它读；两个二进制都链接它。
+NUC_LIB  := src/nucfmt.c
+
+# codegen.c 属于语言二进制（而非 nucutil）：它与 reader 配合解析，并由 main 的
+# -c 编译模式调用，因此必须与 nucfmt.c 一起链接进 mochi（漏掉则链接失败）。
 LANG_SRC := src/value.c src/reader.c src/env.c src/eval.c src/native.c \
-            src/codegen.c src/nucfmt.c src/main.c
-NUC_SRC  := src/nucfmt.c src/nucutil.c
+            src/codegen.c src/main.c
+NUC_SRC  := src/nucutil.c
 SAMPLES  := $(wildcard samples/*.mochi)
+
+# fmod 来自 C 数学库，多数主机(Linux)上是独立的，需要 -lm。
+LDLIBS ?= -lm
 
 .PHONY: all mochi nucutil test clean
 
 all: mochi nucutil
 
-mochi: $(LANG_SRC) include/mochi.h include/codegen.h include/nucfmt.h
-> $(CC) $(CFLAGS) $(LANG_SRC) -o mochi
+mochi: $(LANG_SRC) $(NUC_LIB) include/mochi.h include/nucfmt.h include/codegen.h
+> $(CC) $(CFLAGS) $(LANG_SRC) $(NUC_LIB) -o mochi $(LDLIBS)
 
-nucutil: $(NUC_SRC) include/nucfmt.h
-> $(CC) $(CFLAGS) $(NUC_SRC) -o nucutil
+nucutil: $(NUC_SRC) $(NUC_LIB) include/nucfmt.h
+> $(CC) $(CFLAGS) $(NUC_SRC) $(NUC_LIB) -o nucutil $(LDLIBS)
 
 # 冒烟测试：跑全部样例(解释器) + NUC 流水线(emit-demo -> validate -> run)
 test: all
