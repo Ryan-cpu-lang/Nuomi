@@ -6,6 +6,8 @@ mochi_dbg.exe
 # make 在 Linux/macOS 上产出的无后缀二进制（勿提交）
 /mochi
 /nucutil
+# Windows 快捷方式（本机生成，勿提交）
+*.lnk
 
 # ===== 测试/中间产物 =====
 *.nuc
