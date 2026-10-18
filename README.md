@@ -9,25 +9,70 @@ Mochi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从�
 
 ---
 
+## 📥 下载（Windows / Novus / Linux）
+
+> 当前版本：**Route-A M2** —— 解释器全功能；编译器支持 整数 / 函数(递归) / 局部变量 / if·while /比较 → `.nuc`
+
+### 🪟 Windows
+
+1. 下载本仓库（Code → Download ZIP，或 `git clone`）
+2. 双击 **`build.bat`**（自动探测 clang / gcc / 绿色版 TCC）→ 得到 `mochi.exe` + `nucutil.exe`
+3. 双击 **`run-guess.bat`** 玩猜数字、**`run-games.bat`** 看游戏合集
+4. （可选）双击 **`make-shortcuts.bat`** 生成带 Mochi 图标的快捷方式
+
+### 🖥️ Novus OS（诺维斯）
+
+直接下载 [`dist/novus/`](dist/novus/) 下**已编译好的 .nuc**，拷进 novus-os 用 shell exec 执行：
+
+| 文件 | 功能 | 入口返回值 |
+|---|---|---|
+| [`demo.nuc`](dist/novus/demo.nuc) | 算术演示 | 142 |
+| [`fact.nuc`](dist/novus/fact.nuc) | 递归阶乘 fact(10) | 3628800 |
+| [`fib.nuc`](dist/novus/fib.nuc) | 双递归斐波那契 fib(10) | 55 |
+| [`sum.nuc`](dist/novus/sum.nuc) | while 循环求和 0..99 | 4950 |
+
+- 详见 [`dist/novus/README.md`](dist/novus/README.md)（校验 / 重新编译方法）
+- 自编程序：宿主机上 `mochi -c 程序.mochi -o 程序.nuc`
+- ⚠️ 编译子集暂无 I/O（待 novus 系统调用号表公布）
+
+### 🐧 Linux
+
+```bash
+git clone https://github.com/Ryan-cpu-lang/mochi.git && cd mochi
+make          # 需要 gcc + make，产出 mochi 与 nucutil
+make test     # 冒烟：全部样例 + NUC 流水线
+```
+（或 `./test-linux.sh` 一键）
+
+> 二进制不直接入库（.exe/.nuc 除外——`.nuc` 是诺维斯渠道交付物），三平台统一从源码一键构建；打 GitHub Release 后会在此附各平台预编译包。
+
+---
+
 ## 1. 目录结构（多文件打包）
 
 ```
 .
-├── include/
-│   ├── mochi.h          # 语言：值 / 对象 / 环境 / 求值器 公共头
-│   └── nucfmt.h         # NUC 格式库公共头
+├── include/             # mochi.h / nucfmt.h / codegen.h
 ├── src/
 │   ├── value.c          # 引用计数 GC、字符串驻留、值打印
 │   ├── reader.c         # 读取器（S 表达式 / 向量 / 引号）
 │   ├── env.c            # 作用域环境
 │   ├── eval.c           # 求值器、特殊形式、闭包、apply
-│   ├── native.c         # 内置原生函数
-│   ├── main.c           # REPL 与脚本执行
+│   ├── native.c         # 内置原生函数（含 input / input-int）
+│   ├── main.c           # REPL / 脚本执行 / -c 编译模式
+│   ├── codegen.c        # Route-A 编译后端（Mochi 子集 → x86_64 → .nuc）
 │   ├── nucfmt.c         # NUC 格式：构建 / 解析 / 校验 / dump
-│   └── nucutil.c        # NUC 命令行工具
-├── samples/             # Mochi 示例程序（.mochi）
-├── Makefile
-└── build.bat           # Windows 一键构建
+│   └── nucutil.c        # NUC 命令行工具（emit/validate/dump/run）
+├── samples/             # Mochi 示例程序（.mochi，可解释运行）
+├── dist/novus/          # 预编译示例 .nuc（诺维斯渠道）+ 源码
+├── tools/               # gen-icon.py / make-shortcuts.ps1
+├── docs/                # Mochi 语言规范（权威）
+├── Makefile             # Linux/macOS 构建（make / make test）
+├── build.bat            # Windows 一键构建
+├── run-games.bat        # 双击：游戏合集
+├── run-guess.bat        # 双击：猜数字
+├── make-shortcuts.bat   # 双击：生成带图标快捷方式
+└── test-linux.sh        # Linux 一键冒烟
 ```
 
 ## 2. 构建
