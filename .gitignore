@@ -1,0 +1,18 @@
+# ===== 构建产物 =====
+*.exe
+*.o
+*.obj
+mochi_dbg.exe
+
+# ===== 测试/中间产物 =====
+*.nuc
+*.map
+
+# ===== 编辑器/OS =====
+Thumbs.db
+.DS_Store
+*.swp
+*~
+
+# ===== 不追踪 ISO / 系统镜像（在父目录 E:/novus-os/system） =====
+*.iso
