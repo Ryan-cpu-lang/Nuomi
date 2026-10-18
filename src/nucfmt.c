@@ -6,6 +6,7 @@
 #include "nucfmt.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 /* ====================== 动态字节缓冲 ====================== */
 typedef struct { uint8_t* p; size_t len, cap; } Buf;
@@ -117,11 +118,27 @@ void nuc_builder_set_entry(NucBuilder* b, uint32_t entry_point) { b->entry = ent
 void nuc_builder_set_flags(NucBuilder* b, uint16_t flags) { b->flags = flags; }
 void nuc_builder_set_stack(NucBuilder* b, uint32_t stack_size) { b->stack = stack_size; }
 
+/* errbuf is where a failure is described. It is not decoration: the only
+ * ways this can fail are a bad argument and a failed allocation, and a
+ * caller that gets NULL back needs to know which it was. */
+static void nuc_build_fail(char* errbuf, size_t errlen, const char* why) {
+    if (errbuf != NULL && errlen != 0) snprintf(errbuf, errlen, "%s", why);
+}
+
 uint8_t* nuc_builder_build(NucBuilder* b, size_t* out_size, char* errbuf, size_t errlen) {
+    if (b == NULL || out_size == NULL) {
+        nuc_build_fail(errbuf, errlen, "nuc_builder_build: invalid argument");
+        return NULL;
+    }
     /* ---- 字符串表：首字节 \0，符号名去重 ---- */
     Buf strtab; buf_init(&strtab);
     put8(&strtab, 0);
     uint32_t* symoff = (uint32_t*)malloc(sizeof(uint32_t) * (b->sym_count ? b->sym_count : 1));
+    if (symoff == NULL) {
+        nuc_build_fail(errbuf, errlen, "out of memory building the string table");
+        free(strtab.p);
+        return NULL;
+    }
     for (int i = 0; i < b->sym_count; i++) {
         uint32_t off = 0; bool found = false;
         size_t p = 1; /* 跳过首字节 \0 */
@@ -144,6 +161,11 @@ uint8_t* nuc_builder_build(NucBuilder* b, size_t* out_size, char* errbuf, size_t
 
     /* 段数据文件偏移 */
     uint64_t* segfile = (uint64_t*)malloc(sizeof(uint64_t) * (b->seg_count ? b->seg_count : 1));
+    if (segfile == NULL) {
+        nuc_build_fail(errbuf, errlen, "out of memory laying out the segments");
+        free(symoff); free(strtab.p);
+        return NULL;
+    }
     uint64_t cur = data_start;
     for (int i = 0; i < b->seg_count; i++) {
         if (b->segs[i].type == NUC_SEG_BSS) { segfile[i] = 0; continue; }
