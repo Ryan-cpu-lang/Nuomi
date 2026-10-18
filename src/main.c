@@ -5,6 +5,22 @@
 #include "mochi.h"
 #include "codegen.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#ifndef CP_UTF8
+#define CP_UTF8 65001u
+#endif
+/* Windows 控制台默认按 ANSI/GBK 代码页输出，源码中的 UTF-8 中文字面量会被
+ * 误解码成乱码。把输出/输入代码页设为 UTF-8 即可正确渲染。
+ * （Linux/macOS 终端本就按 UTF-8，无需处理。） */
+static void setup_console_utf8(void) {
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+}
+#else
+static void setup_console_utf8(void) { }
+#endif
+
 void runFile(const char* path, Env* global) {
     FILE* f = fopen(path, "rb");
     if (!f) { fprintf(stderr, "cannot open %s\n", path); exit(1); }
@@ -86,6 +102,7 @@ void repl(Env* global) {
 }
 
 int main(int argc, char** argv) {
+    setup_console_utf8();   /* Windows: 控制台按 UTF-8 输出，修复 REPL 中文标语乱码 */
     Env* global = newEnv(NULL);
     registerNatives(global);
 
