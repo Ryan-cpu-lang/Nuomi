@@ -6,6 +6,9 @@
  *   emit-demo <out.nuc>    生成一个带 PC32 重定位、可在真机跑通的最小示例
  *   run <file.nuc>         （仅 Windows）映射 TEXT 段并执行入口，验证加载流程
  */
+#if !defined(_WIN32)
+#define _DEFAULT_SOURCE 1  /* 让 POSIX 头文件暴露 sysconf/_SC_PAGESIZE/MAP_ANONYMOUS（Linux run 用） */
+#endif
 #include "nucfmt.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,25 +52,13 @@ static int emit_demo(const char* out_path) {
     return 0;
 }
 
-#if defined(_WIN32) && !defined(NO_WIN_RUN)
-#include <windows.h>
-static int run_nuc(const char* path) {
-    size_t len; uint8_t* raw = read_file(path, &len); if (!raw) return 1;
-    NucFile* f = nuc_parse(raw, len); free(raw);
-    if (!f) { fprintf(stderr, "parse failed (bad magic / too small)\n"); return 1; }
-    NucValidate v = nuc_validate(f);
-    if (v.code != NOVUS_OK) { fprintf(stderr, "validate: %s\n", v.msg); nuc_file_free(f); return 1; }
-
-    NucSegment* text = NULL;
+/* ===== 跨平台共享的 .nuc 真机执行辅助 ===== */
+static NucSegment* find_text_seg(NucFile* f) {
     for (uint16_t i = 0; i < f->seg_count; i++)
-        if (f->segments[i].type == NUC_SEG_TEXT) { text = &f->segments[i]; break; }
-    if (!text) { fprintf(stderr, "no TEXT segment\n"); nuc_file_free(f); return 1; }
-
-    uint8_t* base = (uint8_t*)VirtualAlloc(NULL, (SIZE_T)text->size,
-                                           MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-    if (!base) { fprintf(stderr, "VirtualAlloc failed\n"); nuc_file_free(f); return 1; }
-    memcpy(base, f->raw + text->file_offset, text->size);
-
+        if (f->segments[i].type == NUC_SEG_TEXT) return &f->segments[i];
+    return NULL;
+}
+static void apply_pc32_relocs(NucFile* f, NucSegment* text, uint8_t* base) {
     for (uint32_t i = 0; i < f->rel_count; i++) {
         NucReloc* r = &f->relocs[i];
         if (r->r_type != R_X86_64_PC32) {
@@ -83,19 +74,64 @@ static int run_nuc(const char* path) {
         uint8_t* p = base + (r->r_offset - text->vaddr);
         *(int32_t*)p = (int32_t)rel32;
     }
-
+}
+/* 拷贝 TEXT 到 base、应用重定位并调用入口；返回入口返回值（保留原语义：entry = base + entry_point） */
+static int exec_text(NucFile* f, NucSegment* text, uint8_t* base) {
+    memcpy(base, f->raw + text->file_offset, text->size);
+    apply_pc32_relocs(f, text, base);
     uint8_t* entry = base + f->entry_point;
     int (*fn)(void) = (int (*)(void))entry;
     int rc = fn();
     printf("entry returned: %d (0x%X)\n", rc, (unsigned)rc);
+    return rc;
+}
+/* 打开+解析+校验+定位 TEXT 段；失败返回 NULL；成功置 *out_text */
+static NucFile* run_load(const char* path, NucSegment** out_text) {
+    size_t len; uint8_t* raw = read_file(path, &len); if (!raw) return NULL;
+    NucFile* f = nuc_parse(raw, len); free(raw);
+    if (!f) { fprintf(stderr, "parse failed (bad magic / too small)\n"); return NULL; }
+    NucValidate v = nuc_validate(f);
+    if (v.code != NOVUS_OK) { fprintf(stderr, "validate: %s\n", v.msg); nuc_file_free(f); return NULL; }
+    NucSegment* text = find_text_seg(f);
+    if (!text) { fprintf(stderr, "no TEXT segment\n"); nuc_file_free(f); return NULL; }
+    *out_text = text;
+    return f;
+}
+
+#if defined(_WIN32) && !defined(NO_WIN_RUN)
+#include <windows.h>
+static int run_nuc(const char* path) {
+    NucSegment* text; NucFile* f = run_load(path, &text); if (!f) return 1;
+    uint8_t* base = (uint8_t*)VirtualAlloc(NULL, (SIZE_T)text->size,
+                                           MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!base) { fprintf(stderr, "VirtualAlloc failed\n"); nuc_file_free(f); return 1; }
+    exec_text(f, text, base);
     VirtualFree(base, 0, MEM_RELEASE);
+    nuc_file_free(f);
+    return 0;
+}
+#elif defined(__linux__) || defined(__unix__) || defined(__APPLE__)
+#include <sys/mman.h>
+#include <unistd.h>
+#ifndef MAP_ANONYMOUS
+#define MAP_ANONYMOUS MAP_ANON  /* BSD/macOS 用 MAP_ANON */
+#endif
+static int run_nuc(const char* path) {
+    NucSegment* text; NucFile* f = run_load(path, &text); if (!f) return 1;
+    long pg = sysconf(_SC_PAGESIZE); if (pg <= 0) pg = 4096;
+    size_t asize = ((size_t)text->size + (size_t)pg - 1u) & ~((size_t)pg - 1u); /* 页对齐 */
+    void* m = mmap(NULL, asize, PROT_READ | PROT_WRITE | PROT_EXEC,
+                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (m == MAP_FAILED) { fprintf(stderr, "mmap(RWX) failed (需要可执行内存)\n"); nuc_file_free(f); return 1; }
+    exec_text(f, text, (uint8_t*)m);
+    munmap(m, asize);
     nuc_file_free(f);
     return 0;
 }
 #else
 static int run_nuc(const char* path) {
     (void)path;
-    fprintf(stderr, "run: 仅 Windows x86_64 支持真机执行\n");
+    fprintf(stderr, "run: 当前平台暂不支持真机执行（支持 Windows / Linux / macOS）\n");
     return 1;
 }
 #endif

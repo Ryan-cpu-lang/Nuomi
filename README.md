@@ -4,6 +4,8 @@ Mochi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从�
 本仓库同时包含 **NUC 可执行二进制格式（novus-os）** 的读写 / 校验 / dump 工具链，方便把它接入你自己的系统。
 
 > NUC 规范基准：<https://github.com/chen-xin-Liam/novus-os/blob/main/docs/NUC%20%E5%8F%AF%E6%89%A7%E8%A1%8C%E4%BA%8C%E8%BF%9B%E5%88%B6%E6%A0%BC%E5%BC%8F%E8%A7%84%E8%8C%83%20V1.0.md>
+>
+> 📖 语言文档：[`docs/Mochi语言规范.md`](docs/Mochi语言规范.md)（**权威规范**，冲突以此为准） ｜ [`Mochi语言手册.md`](Mochi语言手册.md)（上手教程）
 
 ---
 
