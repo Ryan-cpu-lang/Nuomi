@@ -345,7 +345,7 @@ quote  if  while  define  set!  lambda  begin  and  or
 本规范描述**宿主解释器**（在 Linux/macOS/Windows 上读源码运行）的语言语义。Mochi 的目标产物是 novus-os 的 `.nuc` 原生可执行：
 
 - **运行**：`mochi 文件.mochi` 执行脚本；无参进入 REPL。
-- **编译（进行中）**：`mochi -c 文件.mochi -o 输出.nuc` 目前实现整数算术子集的 Route-A（x86_64 原生码入 `.text`）；函数调用、运行时（GC/内置函数）、字符串/向量/闭包/控制流的原生代码生成见后续里程碑。
+- **编译（Route-A M2）**：`mochi -c 文件.mochi -o 输出.nuc` 支持 **整数运算 + 函数(可递归) + 局部变量 + if/while/begin + 比较** 的 x86_64 原生码（System V 调用约定；跨函数调用经 `R_X86_64_PC32` 重定位 + FUNC 符号表 §5/§7，由加载器装载期解析）。限制：无 字符串/向量/内置 I/O（novus 系统调用号表公布后以 `(syscall n ...)` 接入）；编译期布尔为 1/0；顶层 `define` 为编译期常量（不可 `set!`）；每函数 ≤6 参数、≤32 个局部槽。
 - NUC 工具链 `nucutil`（`emit-demo` / `validate` / `dump` / `run`）跨 Windows/Linux/macOS。
 
 > 环境对齐示例（Linux + gcc）：

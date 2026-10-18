@@ -1,22 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * codegen.c — 里程碑 1：整数算术子集 → x86_64 机器码 → NUC 文件
+ * codegen.c — Route-A 编译后端：Mochi 子集 → x86_64 机器码 → NUC 文件
  *
- * 设计要点（路线 A：直接机器码，不解释）：
- *   - 编译期符号表：处理顶层 (define name expr)，expr 必须是可常量折叠的整数
- *     算术（字面量 / 已定义符号 / + - *），结果登记为常量。
- *   - 入口表达式：递归遍历 AST，把结果算进 RAX；子表达式结果也留在 RAX，
- *     用 RBX 暂存左操作数。这样不需要通用寄存器分配就能生成正确的算术指令。
- *   - 生成的 .text：编译出的指令 + ret；入口偏移 0。无外部符号，无需重定位。
+ * M2 里程碑：整数 + 函数(可递归) + 局部变量 + if/while/begin + 比较 + 跨函数调用。
  *
- * x86_64 指令编码（System V AMD64）：
- *   mov eax, imm32 (符号扩展)         B8 + imm32        ; 值在 int32 范围内
- *   movabs rax, imm64                48 B8 + imm64      ; 超出 int32
- *   mov ebx, eax                     89 C3
- *   add eax, ebx                     01 D8
- *   sub eax, ebx                     29 D8
- *   imul eax, ebx                    0F AF C3
- *   ret                              C3
+ * 严格遵循《NUC 可执行二进制格式规范 V1.0》：
+ *   - 每个函数一个 FUNC/LOCAL 符号（§5），跨函数调用生成 R_X86_64_PC32 重定位（§7），
+ *     加载器按 §7.3 在装载期解析 —— 这正是 novus-os 加载器的职责；
+ *   - entry_point 为 .text 段内字节偏移（§9.1），entry_rip = text.vaddr + entry_point；
+ *   - TEXT 段 R|X|USER（§4.3 bit3 必置），W^X。
+ * 调用约定：System V AMD64（rdi,rsi,rdx,rcx,r8,r9 传参 / rax 返回），
+ * 与 NUC 规范 §1 声明的系统调用参数寄存器一致。
+ *
+ * 本里程碑已知限制：仅整数；无字符串/向量/内置 I/O（novus 系统调用号表未公布，
+ * 公布后加 (syscall n ...) 即可）；布尔用 1/0（0=假）；while 返回循环结果；
+ * 最多 6 参数；每函数最多 16 个局部槽；顶层 define 为编译期常量（不可 set!）。
  */
 #include "mochi.h"
 #include "nucfmt.h"
@@ -39,31 +37,72 @@ static void cg_put(CGBuf* b, const uint8_t* d, size_t n) {
 static void cg_u8(CGBuf* b, uint8_t v)   { cg_put(b, &v, 1); }
 static void cg_u32(CGBuf* b, uint32_t v) { uint8_t t[4] = { (uint8_t)(v&0xff),(uint8_t)((v>>8)&0xff),(uint8_t)((v>>16)&0xff),(uint8_t)((v>>24)&0xff) }; cg_put(b, t, 4); }
 static void cg_u64(CGBuf* b, uint64_t v) { uint8_t t[8]; for (int i=0;i<8;i++) t[i]=(uint8_t)((v>>(8*i))&0xff); cg_put(b, t, 8); }
+static void cg_patch_u32(CGBuf* b, size_t pos, uint32_t v) {
+    for (int i = 0; i < 4; i++) b->p[pos + i] = (uint8_t)((v >> (8 * i)) & 0xff);
+}
 
-/* ====================== 指令编码 ====================== */
-static void cg_mov_eax_imm(CGBuf* b, int64_t v) {
+/* ====================== 指令编码（x86_64, System V） ====================== */
+static void cg_mov_rax_imm(CGBuf* b, int64_t v) {
     if (v >= -2147483648LL && v <= 2147483647LL) {
-        cg_u8(b, 0xB8); cg_u32(b, (uint32_t)(int32_t)v);   /* mov eax, imm32（符号扩展至 rax） */
+        cg_u8(b,0x48); cg_u8(b,0xC7); cg_u8(b,0xC0); cg_u32(b,(uint32_t)(int32_t)v); /* mov rax, imm32(符号扩展) */
     } else {
-        cg_u8(b, 0x48); cg_u8(b, 0xB8); cg_u64(b, (uint64_t)v); /* movabs rax, imm64 */
+        cg_u8(b,0x48); cg_u8(b,0xB8); cg_u64(b,(uint64_t)v);                          /* movabs rax, imm64 */
     }
 }
-/* 只用调用方保存寄存器 RAX/RDX/RCX；绝不动 RBX/RBP/R12-R15（被调用方保存，
-   本入口是叶子函数，clobber 它们会破坏 SysV ABI）。左操作数用栈暂存(push/pop)，
-   这样任意深度的嵌套算术都不会寄存器互踩。 */
-static void cg_push_rax(CGBuf* b)  { cg_u8(b, 0x50); }                 /* push rax */
-static void cg_pop_rdx(CGBuf* b)   { cg_u8(b, 0x5A); }                 /* pop rdx  (5A = pop rdx) */
-static void cg_add_eax_edx(CGBuf* b){ cg_u8(b,0x01); cg_u8(b,0xD0); }  /* add eax, edx */
-/* 注意：双操作数 imul 的 Reg 字段是「目的」(与 add/mov 相反)，
-   故 imul eax, edx 应为 0F AF C2（reg=eax, r/m=edx），而非 D0。 */
-static void cg_imul_eax_edx(CGBuf* b){ cg_u8(b,0x0F); cg_u8(b,0xAF); cg_u8(b,0xC2); } /* imul eax, edx */
-static void cg_neg_eax(CGBuf* b)   { cg_u8(b,0xF7); cg_u8(b,0xD8); }   /* neg eax */
-static void cg_ret(CGBuf* b)       { cg_u8(b,0xC3); }
+static void cg_push_rax(CGBuf* b)  { cg_u8(b,0x50); }
+static void cg_pop_rdx(CGBuf* b)   { cg_u8(b,0x5A); }                  /* pop rdx */
+static void cg_add_rax_rdx(CGBuf* b){ cg_u8(b,0x48); cg_u8(b,0x01); cg_u8(b,0xD0); }
+static void cg_imul_rax_rdx(CGBuf* b){ cg_u8(b,0x48); cg_u8(b,0x0F); cg_u8(b,0xAF); cg_u8(b,0xC2); }
+static void cg_neg_rax(CGBuf* b)   { cg_u8(b,0x48); cg_u8(b,0xF7); cg_u8(b,0xD8); }
+static void cg_xor_eax(CGBuf* b)   { cg_u8(b,0x31); cg_u8(b,0xC0); }
+static void cg_cmp_rdx_rax(CGBuf* b){ cg_u8(b,0x48); cg_u8(b,0x39); cg_u8(b,0xC2); } /* cmp rdx, rax (左-右) */
+static void cg_setcc_al(CGBuf* b, uint8_t cc){ cg_u8(b,0x0F); cg_u8(b,cc); cg_u8(b,0xC0); }
+static void cg_movzx_eax_al(CGBuf* b){ cg_u8(b,0x0F); cg_u8(b,0xB6); cg_u8(b,0xC0); }
+static void cg_test_rax_rax(CGBuf* b){ cg_u8(b,0x48); cg_u8(b,0x85); cg_u8(b,0xC0); }
+static void cg_jmp_rel32(CGBuf* b)       { cg_u8(b,0xE9); cg_u32(b,0); }
+static void cg_jcc_rel32(CGBuf* b, uint8_t cc){ cg_u8(b,0x0F); cg_u8(b,cc); cg_u32(b,0); }
+static void cg_call_rel32(CGBuf* b)      { cg_u8(b,0xE8); cg_u32(b,0); }
+static void cg_ret(CGBuf* b)             { cg_u8(b,0xC3); }
+static void cg_leave(CGBuf* b)           { cg_u8(b,0xC9); }
+static void cg_prologue(CGBuf* b) {
+    cg_u8(b,0x55);                                   /* push rbp */
+    cg_u8(b,0x48); cg_u8(b,0x89); cg_u8(b,0xE5);     /* mov rbp, rsp */
+    cg_u8(b,0x48); cg_u8(b,0x81); cg_u8(b,0xEC);     /* sub rsp, 256 (32 槽: 参数+局部+隐藏) */
+    cg_u8(b,0x00); cg_u8(b,0x01); cg_u8(b,0x00); cg_u8(b,0x00);
+}
+/* 存第 regidx 个参数寄存器到 [rbp+disp]（disp 为负——参数槽在被调函数自己帧内，
+   绝不写 [rbp+16..]：那会覆盖调用方压栈暂存的中间值！这是本编译器最关键的栈纪律。） */
+static void cg_store_reg_local(CGBuf* b, int regidx, int disp) {
+    static const uint8_t base[6][3] = {
+        {0x48,0x89,0x7D},{0x48,0x89,0x75},{0x48,0x89,0x55},
+        {0x48,0x89,0x4D},{0x4C,0x89,0x45},{0x4C,0x89,0x4D},
+    };
+    static const uint8_t base32[6][3] = {
+        {0x48,0x89,0xBD},{0x48,0x89,0xB5},{0x48,0x89,0x95},
+        {0x48,0x89,0x8D},{0x4C,0x89,0x85},{0x4C,0x89,0x8D},
+    };
+    if (disp >= -128) { cg_put(b, base[regidx], 3); cg_u8(b, (uint8_t)(uint8_t)disp); }
+    else { cg_put(b, base32[regidx], 3); cg_u32(b, (uint32_t)(int32_t)disp); }
+}
+static void cg_load_rax_local(CGBuf* b, int disp) {   /* disp 为负 */
+    if (disp >= -128) { cg_u8(b,0x48); cg_u8(b,0x8B); cg_u8(b,0x45); cg_u8(b,(uint8_t)disp); }
+    else { cg_u8(b,0x48); cg_u8(b,0x8B); cg_u8(b,0x85); cg_u32(b,(uint32_t)(int32_t)disp); }
+}
+static void cg_store_rax_local(CGBuf* b, int disp) {
+    if (disp >= -128) { cg_u8(b,0x48); cg_u8(b,0x89); cg_u8(b,0x45); cg_u8(b,(uint8_t)disp); }
+    else { cg_u8(b,0x48); cg_u8(b,0x89); cg_u8(b,0x85); cg_u32(b,(uint32_t)(int32_t)disp); }
+}
 
-/* ====================== 编译期常量表 ====================== */
+/* ====================== 符号辅助 ====================== */
+static char* cg_strdup(const char* s) { size_t l = strlen(s)+1; char* p = (char*)malloc(l); memcpy(p,s,l); return p; }
+static bool cg_isSymbol(Value v) {
+    return IS_OBJ(v) && AS_OBJ(v)->type == OBJ_STRING && ((ObjString*)AS_OBJ(v))->isSymbol;
+}
+static const char* cg_symChars(Value v) { return ((ObjString*)AS_OBJ(v))->chars; }
+
+/* 编译期常量表（顶层 (define name expr)） */
 typedef struct { char* name; int64_t val; } Const;
 typedef struct { Const* c; int n, cap; } ConstTab;
-static char* cg_strdup(const char* s) { size_t l = strlen(s)+1; char* p = (char*)malloc(l); memcpy(p,s,l); return p; }
 static void ct_add(ConstTab* t, const char* name, int64_t v) {
     for (int i=0;i<t->n;i++) if (strcmp(t->c[i].name,name)==0){ t->c[i].val=v; return; }
     if (t->n==t->cap){ t->cap = t->cap<4?4:t->cap*2; t->c=(Const*)realloc(t->c,t->cap*sizeof(Const)); }
@@ -74,77 +113,309 @@ static bool ct_find(ConstTab* t, const char* name, int64_t* out) {
     return false;
 }
 
-static bool isSymbol(Value v) {
-    return IS_OBJ(v) && AS_OBJ(v)->type == OBJ_STRING && ((ObjString*)AS_OBJ(v))->isSymbol;
-}
-static const char* symChars(Value v) { return ((ObjString*)AS_OBJ(v))->chars; }
+/* 函数定义表 */
+typedef struct {
+    char* name;
+    Value params;      /* 符号列表 */
+    Value body;        /* 形式列表 */
+    int nparams;
+    int symidx;        /* NUC 符号表下标 */
+    uint64_t offset;   /* 在 .text 中的偏移 */
+    uint64_t size;
+} FuncDef;
+typedef struct { FuncDef* f; int n, cap; } FuncTab;
 
-/* 常量折叠：编译期把整数算术表达式算成 int64（仅字面量 / 已知符号 / + - *） */
-static bool fold(Value node, ConstTab* tab, int64_t* out, char* err, size_t errlen) {
-    if (IS_NUM(node)) { *out = (int64_t)AS_NUM(node); return true; }
-    if (isSymbol(node)) {
+/* 局部变量（参数为正偏移，局部为负偏移） */
+typedef struct { char* name; int disp; } Local;
+
+/* 重定位（记录最终 .text 内偏移，构建时换算成 VA） */
+typedef struct { size_t text_pos; int symidx; } CGRel;
+
+/* ====================== 编译上下文 ====================== */
+typedef struct {
+    FuncTab ft;
+    ConstTab ct;
+    CGBuf* out;        /* 当前发射缓冲（函数用临时缓冲，入口直接用 .text） */
+    /* 标签/跳转修复（针对当前 out） */
+    struct { int id; size_t pos; } *labs; int nlab, labcap;
+    struct { int id; size_t pos; } *fixs; int nfix, fixcap;
+    int nextlab;
+    /* 变量作用域（每函数重建） */
+    Local* vars; int nvar, varcap;
+    int nslots;        /* 已用局部槽（负偏移计数） */
+    /* 重定位收集（最终 .text 偏移） */
+    CGRel* rels; int nrel, relcap;
+    size_t text_base;  /* 本次发射内容将拼接进 .text 的起始偏移 */
+    char err[256]; size_t errlen;
+} CG;
+
+static int lab_new(CG* c) { return c->nextlab++; }
+static void lab_mark(CG* c, int id) {
+    if (c->nlab==c->labcap){ c->labcap=c->labcap<8?8:c->labcap*2; c->labs=realloc(c->labs,c->labcap*sizeof(*c->labs)); }
+    c->labs[c->nlab].id=id; c->labs[c->nlab].pos=c->out->len; c->nlab++;
+}
+static void fix_add(CG* c, int id) {
+    /* 紧跟在跳转指令(E9 / 0F 8x)之后调用：rel32 字段位于 len-4 处 */
+    if (c->nfix==c->fixcap){ c->fixcap=c->fixcap<8?8:c->fixcap*2; c->fixs=realloc(c->fixs,c->fixcap*sizeof(*c->fixs)); }
+    c->fixs[c->nfix].id=id; c->fixs[c->nfix].pos=c->out->len - 4; c->nfix++;
+}
+/* 解析当前 out 里全部未决跳转；有未定义标签则报错 */
+static int lab_resolve(CG* c) {
+    for (int i = 0; i < c->nfix; i++) {
+        ssize_t target = -1;
+        for (int j = 0; j < c->nlab; j++)
+            if (c->labs[j].id == c->fixs[i].id) { target = (ssize_t)c->labs[j].pos; break; }
+        if (target < 0) { snprintf(c->err, c->errlen, "internal: unresolved label %d", c->fixs[i].id); return -1; }
+        int64_t rel = target - (ssize_t)(c->fixs[i].pos + 4);
+        cg_patch_u32(c->out, c->fixs[i].pos, (uint32_t)rel);
+    }
+    c->nlab = 0; c->nfix = 0;
+    return 0;
+}
+static void scope_reset(CG* c) { c->nvar = 0; c->nslots = 0; }
+static bool var_find(CG* c, const char* name, int* disp) {
+    for (int i=0;i<c->nvar;i++) if (strcmp(c->vars[i].name,name)==0){ *disp=c->vars[i].disp; return true; }
+    return false;
+}
+static int var_alloc(CG* c, const char* name) {
+    for (int i=0;i<c->nvar;i++) if (strcmp(c->vars[i].name,name)==0) return c->vars[i].disp;
+    if (c->nslots >= 32) { snprintf(c->err,c->errlen,"too many locals (max 32 slots per function)"); return 0; }
+    if (c->nvar==c->varcap){ c->varcap=c->varcap<8?8:c->varcap*2; c->vars=realloc(c->vars,c->varcap*sizeof(Local)); }
+    c->nslots++;
+    int disp = -8 * c->nslots;
+    c->vars[c->nvar].name = cg_strdup(name); c->vars[c->nvar].disp = disp; c->nvar++;
+    return disp;
+}
+static void rel_add(CG* c, size_t text_pos, int symidx) {
+    if (c->nrel==c->relcap){ c->relcap=c->relcap<8?8:c->relcap*2; c->rels=realloc(c->rels,c->relcap*sizeof(CGRel)); }
+    c->rels[c->nrel].text_pos = text_pos; c->rels[c->nrel].symidx = symidx; c->nrel++;
+}
+static int func_find(CG* c, const char* name) {
+    for (int i=0;i<c->ft.n;i++) if (strcmp(c->ft.f[i].name,name)==0) return i;
+    return -1;
+}
+
+static bool cg_expr(CG* c, Value node);
+
+/* 发射 call rel32 + PC32 重定位（加载期解析，天然支持前向/递归引用） */
+static bool cg_call_by_index(CG* c, int fi, Value args) {
+    FuncDef* fd = &c->ft.f[fi];
+    int cnt = 0;
+    for (Value p = args; isList(p); p = listCdr(p)) cnt++;
+    if (cnt != fd->nparams) { snprintf(c->err,c->errlen,"'%s' expects %d args, got %d", fd->name, fd->nparams, cnt); return false; }
+    if (cnt > 6) { snprintf(c->err,c->errlen,"more than 6 args not supported"); return false; }
+    for (Value p = args; isList(p); p = listCdr(p)) {
+        if (!cg_expr(c, listCar(p))) return false;
+        cg_push_rax(c->out);
+    }
+    static const uint8_t popreg[6][2] = {
+        {0x5F,0x00}, /* pop rdi */ {0x5E,0x00}, /* pop rsi */ {0x5A,0x00}, /* pop rdx */
+        {0x59,0x00}, /* pop rcx */ {0x41,0x58}, /* pop r8  */ {0x41,0x59}, /* pop r9  */
+    };
+    for (int i = cnt; i >= 1; i--) {
+        cg_put(c->out, popreg[i-1], popreg[i-1][1] ? 2 : 1);
+    }
+    cg_call_rel32(c->out);
+    rel_add(c, c->text_base + c->out->len - 4, fd->symidx);  /* rel32 字段的最终 .text 偏移 */
+    return true;
+}
+
+static bool cg_expr(CG* c, Value node) {
+    if (IS_NUM(node)) { cg_mov_rax_imm(c->out, (int64_t)AS_NUM(node)); return true; }
+    if (cg_isSymbol(node)) {
+        const char* nm = cg_symChars(node);
+        if (strcmp(nm,"true")==0)  { cg_mov_rax_imm(c->out, 1); return true; }
+        if (strcmp(nm,"false")==0) { cg_xor_eax(c->out); return true; }
+        int disp;
+        if (var_find(c, nm, &disp)) { cg_load_rax_local(c->out, disp); return true; }
         int64_t v;
-        if (!ct_find(tab, symChars(node), &v)) { snprintf(err, errlen, "undefined symbol '%s'", symChars(node)); return false; }
+        if (ct_find(&c->ct, nm, &v)) { cg_mov_rax_imm(c->out, v); return true; }
+        if (func_find(c, nm) >= 0) { snprintf(c->err,c->errlen,"function '%s' used as value (not supported)", nm); return false; }
+        snprintf(c->err,c->errlen,"undefined symbol '%s'", nm); return false;
+    }
+    if (!isList(node)) { snprintf(c->err,c->errlen,"unsupported expression in compile mode"); return false; }
+    Value head = listCar(node);
+    if (!cg_isSymbol(head)) { snprintf(c->err,c->errlen,"bad form head"); return false; }
+    const char* op = cg_symChars(head);
+    Value args = listCdr(node);
+
+    /* ---- 算术 ---- */
+    if (strcmp(op,"+")==0 || strcmp(op,"-")==0 || strcmp(op,"*")==0) {
+        int cnt = 0; for (Value p = args; isList(p); p = listCdr(p)) cnt++;
+        if (cnt == 0) { snprintf(c->err,c->errlen,"%s expects >=1 argument", op); return false; }
+        bool isSub = (op[0]=='-' && op[1]==0), isMul = (op[0]=='*' && op[1]==0);
+        if (!cg_expr(c, listCar(args))) return false;
+        for (Value p = listCdr(args); isList(p); p = listCdr(p)) {
+            cg_push_rax(c->out);
+            if (!cg_expr(c, listCar(p))) return false;
+            cg_pop_rdx(c->out);
+            if (isSub)      { cg_neg_rax(c->out); cg_add_rax_rdx(c->out); }
+            else if (isMul) cg_imul_rax_rdx(c->out);
+            else            cg_add_rax_rdx(c->out);
+        }
+        if (isSub && cnt == 1) cg_neg_rax(c->out);
+        return true;
+    }
+    /* ---- 比较 ---- */
+    if (strcmp(op,"=")==0||strcmp(op,"<")==0||strcmp(op,">")==0||
+        strcmp(op,"<=")==0||strcmp(op,">=")==0) {
+        uint8_t cc;
+        if (op[0]=='=' ) cc=0x94; else if (op[0]=='<'&&op[1]==0) cc=0x9C;
+        else if (op[0]=='>'&&op[1]==0) cc=0x9F; else if (op[0]=='<') cc=0x9E; else cc=0x9D;
+        if (!isList(args) || !isList(listCdr(args)) || isList(listCdr(listCdr(args)))) {
+            snprintf(c->err,c->errlen,"%s expects exactly 2 arguments", op); return false;
+        }
+        if (!cg_expr(c, listCar(args))) return false;          /* 左 -> rax */
+        cg_push_rax(c->out);
+        if (!cg_expr(c, listCar(listCdr(args)))) return false; /* 右 -> rax */
+        cg_pop_rdx(c->out);                                    /* rdx=左, rax=右 */
+        cg_cmp_rdx_rax(c->out);                                /* cmp 左, 右 */
+        cg_setcc_al(c->out, cc);
+        cg_movzx_eax_al(c->out);
+        return true;
+    }
+    /* ---- if ---- */
+    if (strcmp(op,"if")==0) {
+        int narg = 0; for (Value p = args; isList(p); p = listCdr(p)) narg++;
+        if (narg < 2 || narg > 3) { snprintf(c->err,c->errlen,"if expects 2 or 3 args"); return false; }
+        int Lelse = lab_new(c), Lend = lab_new(c);
+        if (!cg_expr(c, listCar(args))) return false;          /* cond */
+        cg_test_rax_rax(c->out);
+        cg_jcc_rel32(c->out, 0x84);                            /* je Lelse */
+        fix_add(c, Lelse);
+        if (!cg_expr(c, listCar(listCdr(args)))) return false; /* then */
+        cg_jmp_rel32(c->out); fix_add(c, Lend);
+        lab_mark(c, Lelse);
+        if (narg == 3) { if (!cg_expr(c, listCar(listCdr(listCdr(args))))) return false; }
+        else cg_xor_eax(c->out);                               /* 无 else -> 0 */
+        lab_mark(c, Lend);
+        return lab_resolve(c) == 0;
+    }
+    /* ---- while ---- */
+    if (strcmp(op,"while")==0) {
+        int narg = 0; for (Value p = args; isList(p); p = listCdr(p)) narg++;
+        if (narg < 1) { snprintf(c->err,c->errlen,"while expects cond + body"); return false; }
+        char slotname[32]; snprintf(slotname,sizeof slotname,"__while%d", c->nextlab);
+        int slot = var_alloc(c, slotname);
+        if (c->err[0]) return false;
+        int Lstart = lab_new(c), Lend = lab_new(c);
+        cg_xor_eax(c->out); cg_store_rax_local(c->out, slot);
+        lab_mark(c, Lstart);
+        if (!cg_expr(c, listCar(args))) return false;          /* cond */
+        cg_test_rax_rax(c->out);
+        cg_jcc_rel32(c->out, 0x84); fix_add(c, Lend);          /* je Lend */
+        for (Value p = listCdr(args); isList(p); p = listCdr(p))
+            if (!cg_expr(c, listCar(p))) return false;         /* body */
+        cg_store_rax_local(c->out, slot);                      /* 记录本次结果 */
+        cg_jmp_rel32(c->out); fix_add(c, Lstart);
+        lab_mark(c, Lend);
+        cg_load_rax_local(c->out, slot);                       /* while 值 = 最后一次 body 值 */
+        return lab_resolve(c) == 0;
+    }
+    /* ---- begin ---- */
+    if (strcmp(op,"begin")==0) {
+        bool any = false;
+        for (Value p = args; isList(p); p = listCdr(p)) {
+            if (!cg_expr(c, listCar(p))) return false;
+            any = true;
+        }
+        if (!any) cg_xor_eax(c->out);
+        return true;
+    }
+    /* ---- set!（仅函数内局部/参数） ---- */
+    if (strcmp(op,"set!")==0) {
+        Value nm = listCar(args);
+        if (!cg_isSymbol(nm)) { snprintf(c->err,c->errlen,"set!: not a symbol"); return false; }
+        int disp;
+        if (!var_find(c, cg_symChars(nm), &disp)) {
+            snprintf(c->err,c->errlen,"set!: '%s' is not a local (top-level defines are compile-time constants)", cg_symChars(nm));
+            return false;
+        }
+        if (!cg_expr(c, listCar(listCdr(args)))) return false;
+        cg_store_rax_local(c->out, disp);
+        return true;
+    }
+    /* ---- define（函数内局部） ---- */
+    if (strcmp(op,"define")==0) {
+        Value nm = listCar(args);
+        if (!cg_isSymbol(nm)) { snprintf(c->err,c->errlen,"define inside function: (define name expr)"); return false; }
+        int disp = var_alloc(c, cg_symChars(nm));
+        if (c->err[0]) return false;
+        if (!cg_expr(c, listCar(listCdr(args)))) return false;
+        cg_store_rax_local(c->out, disp);
+        return true;
+    }
+    /* ---- 函数调用 ---- */
+    int fi = func_find(c, op);
+    if (fi >= 0) return cg_call_by_index(c, fi, args);
+    snprintf(c->err,c->errlen,"'%s' is not a function or supported form in compile mode", op);
+    return false;
+}
+
+/* 编译单个函数到临时缓冲，再拼进 text */
+static bool cg_compile_function(CG* c, FuncDef* fd, CGBuf* text) {
+    CGBuf tmp; cg_init(&tmp);
+    c->out = &tmp; scope_reset(c); c->err[0] = 0;
+    cg_prologue(c->out);
+    /* 参数：SysV 寄存器 -> 被调函数自己帧内的负偏移槽（不可写 [rbp+16..]，见 cg_store_reg_local） */
+    int i = 0;
+    for (Value p = fd->params; isList(p); p = listCdr(p), i++) {
+        Value pv = listCar(p);
+        if (!cg_isSymbol(pv)) { snprintf(c->err,c->errlen,"param is not a symbol"); goto done; }
+        char nm[128]; snprintf(nm,sizeof nm,"%s", cg_symChars(pv));
+        c->nslots++;
+        int disp = -8 * c->nslots;
+        if (c->nvar==c->varcap){ c->varcap=c->varcap<8?8:c->varcap*2; c->vars=realloc(c->vars,c->varcap*sizeof(Local)); }
+        c->vars[c->nvar].name = cg_strdup(nm);
+        c->vars[c->nvar].disp = disp;
+        c->nvar++;
+        cg_store_reg_local(c->out, i, disp);
+    }
+    for (Value f = fd->body; isList(f); f = listCdr(f)) {
+        if (!cg_expr(c, listCar(f))) goto done;   /* 依次求值，值留在 rax */
+    }
+    cg_leave(c->out);
+    cg_ret(c->out);
+    if (lab_resolve(c) != 0) goto done;
+    fd->offset = text->len;
+    fd->size = tmp.len;
+    cg_put(text, tmp.p, tmp.len);
+done:
+    free(tmp.p);
+    c->out = NULL;
+    return c->err[0] == 0;
+}
+
+/* 编译期常量折叠（顶层 (define name expr)，仅字面量/已知常量/+ - *） */
+static bool fold_const(CG* c, Value node, int64_t* out) {
+    if (IS_NUM(node)) { *out = (int64_t)AS_NUM(node); return true; }
+    if (cg_isSymbol(node)) {
+        int64_t v;
+        if (!ct_find(&c->ct, cg_symChars(node), &v)) {
+            snprintf(c->err,c->errlen,"undefined symbol '%s'", cg_symChars(node)); return false;
+        }
         *out = v; return true;
     }
     if (isList(node)) {
         Value head = listCar(node);
-        if (!isSymbol(head)) { snprintf(err, errlen, "bad form head"); return false; }
-        const char* op = symChars(head);
+        if (!cg_isSymbol(head)) { snprintf(c->err,c->errlen,"bad form head"); return false; }
+        const char* op = cg_symChars(head);
         Value args = listCdr(node);
-        int cnt = 0; for (Value c = args; isList(c); c = listCdr(c)) cnt++;
-        if (cnt == 0) { snprintf(err, errlen, "%s expects >=1 argument", op); return false; }
-        int64_t acc = 0;
-        bool first = true;
-        for (Value c = args; isList(c); c = listCdr(c)) {
-            int64_t v; if (!fold(listCar(c), tab, &v, err, errlen)) return false;
-            if (strcmp(op,"+")==0)      acc = first ? v : acc + v;
-            else if (strcmp(op,"-")==0) acc = first ? v : acc - v;
-            else if (strcmp(op,"*")==0) acc = first ? v : acc * v;
-            else { snprintf(err, errlen, "operator '%s' not supported in compile mode", op); return false; }
+        int cnt = 0; for (Value p = args; isList(p); p = listCdr(p)) cnt++;
+        if (cnt == 0) { snprintf(c->err,c->errlen,"%s expects >=1 argument", op); return false; }
+        int64_t acc = 0; bool first = true;
+        for (Value p = args; isList(p); p = listCdr(p)) {
+            int64_t v; if (!fold_const(c, listCar(p), &v)) return false;
+            if (op[0]=='+'&&op[1]==0)      acc = first ? v : acc + v;
+            else if (op[0]=='-'&&op[1]==0) acc = first ? v : acc - v;
+            else if (op[0]=='*'&&op[1]==0) acc = first ? v : acc * v;
+            else { snprintf(c->err,c->errlen,"operator '%s' not supported in compile mode", op); return false; }
             first = false;
         }
-        if (strcmp(op,"-")==0 && cnt==1) acc = -acc;  /* 单目取负 */
+        if (op[0]=='-'&&op[1]==0 && cnt==1) acc = -acc;
         *out = acc; return true;
     }
-    snprintf(err, errlen, "unsupported expression in compile mode");
-    return false;
-}
-
-/* 代码生成：把表达式编译成 x86_64 指令，结果留在 RAX */
-static bool cg_expr(Value node, ConstTab* tab, CGBuf* b, char* err, size_t errlen) {
-    if (IS_NUM(node)) { cg_mov_eax_imm(b, (int64_t)AS_NUM(node)); return true; }
-    if (isSymbol(node)) {
-        int64_t v;
-        if (!ct_find(tab, symChars(node), &v)) { snprintf(err, errlen, "undefined symbol '%s'", symChars(node)); return false; }
-        cg_mov_eax_imm(b, v); return true;
-    }
-    if (isList(node)) {
-        Value head = listCar(node);
-        if (!isSymbol(head)) { snprintf(err, errlen, "bad form head"); return false; }
-        const char* op = symChars(head);
-        Value args = listCdr(node);
-        if (strcmp(op,"+")==0 || strcmp(op,"-")==0 || strcmp(op,"*")==0) {
-            int cnt = 0; for (Value c = args; isList(c); c = listCdr(c)) cnt++;
-            if (cnt == 0) { snprintf(err, errlen, "%s expects >=1 argument", op); return false; }
-            bool isSub = (strcmp(op,"-")==0), isMul = (strcmp(op,"*")==0);
-            /* 编译第一个操作数 → RAX（左值） */
-            if (!cg_expr(listCar(args), tab, b, err, errlen)) return false;
-            for (Value c = listCdr(args); isList(c); c = listCdr(c)) {
-                cg_push_rax(b);                                  /* 左值压栈保存（RAX 是调用方保存，安全） */
-                if (!cg_expr(listCar(c), tab, b, err, errlen)) return false;  /* 右值 → RAX */
-                cg_pop_rdx(b);                                   /* rdx = 左值；右值仍在 RAX */
-                if (isSub)      { cg_neg_eax(b); cg_add_eax_edx(b); } /* RAX = 左 - 右 */
-                else if (isMul) cg_imul_eax_edx(b);              /* RAX = 左 * 右 */
-                else            cg_add_eax_edx(b);               /* RAX = 左 + 右 */
-            }
-            if (isSub && cnt == 1) cg_neg_eax(b);                /* 单目取负：RAX = -RAX */
-            return true;
-        }
-        snprintf(err, errlen, "operator '%s' not supported in compile mode", op);
-        return false;
-    }
-    snprintf(err, errlen, "unsupported expression in compile mode");
+    snprintf(c->err,c->errlen,"unsupported expression in compile mode");
     return false;
 }
 
@@ -153,59 +424,115 @@ int mochi_compile_to_nuc(const char* src, uint8_t** out, size_t* out_size, char*
     Reader r;
     r.src = src; r.len = strlen(src); r.pos = 0; r.error = false; r.done = false; r.errmsg = NULL;
 
-    ConstTab tab; tab.c = NULL; tab.n = 0; tab.cap = 0;
-    CGBuf text; cg_init(&text);
+    CG c; memset(&c, 0, sizeof c);
+    c.errlen = sizeof c.err;
 
-    /* 解析全部顶层表单（上限 256，里程碑足够） */
     Value forms[256]; int nf = 0;
     while (!r.done && !r.error) {
         Value f = readForm(&r);
-        if (r.error) { snprintf(err, errlen, "parse error: %s", r.errmsg ? r.errmsg : "?"); goto fail; }
+        if (r.error) { snprintf(err, errlen, "parse error: %s", r.errmsg ? r.errmsg : "?"); return -1; }
         if (IS_NIL(f) && r.done) break;
         if (nf < 256) forms[nf++] = f;
     }
 
-    /* 处理 define（常量折叠登记），并记录最后一个非 define 表单作为入口 */
+    /* ---- 第一遍：分类顶层表单 ---- */
     int entryIdx = -1;
     for (int i = 0; i < nf; i++) {
         Value f = forms[i];
-        if (isList(f) && isSymbol(listCar(f)) && strcmp(symChars(listCar(f)), "define") == 0) {
+        if (isList(f) && cg_isSymbol(listCar(f)) && strcmp(cg_symChars(listCar(f)), "define") == 0) {
             Value rest = listCdr(f);
-            if (!isList(rest) || !isSymbol(listCar(rest))) { snprintf(err, errlen, "define: (define name expr)"); goto fail; }
-            const char* nm = symChars(listCar(rest));
-            int64_t v;
-            if (!fold(listCar(listCdr(rest)), &tab, &v, err, errlen)) goto fail;
-            ct_add(&tab, nm, v);
-            continue;
+            if (isList(rest) && isList(listCar(rest))) {
+                /* 函数定义：(define (name params...) body...) */
+                Value head = listCar(rest);
+                if (!cg_isSymbol(listCar(head))) { snprintf(err,errlen,"define: bad function name"); return -1; }
+                if (c.ft.n == c.ft.cap){ c.ft.cap=c.ft.cap<4?4:c.ft.cap*2; c.ft.f=realloc(c.ft.f,c.ft.cap*sizeof(FuncDef)); }
+                FuncDef* fd = &c.ft.f[c.ft.n++];
+                memset(fd, 0, sizeof *fd);
+                fd->name = cg_strdup(cg_symChars(listCar(head)));
+                fd->params = listCdr(head);
+                fd->body = listCdr(rest);
+                for (Value p = fd->params; isList(p); p = listCdr(p)) fd->nparams++;
+                continue;
+            }
+            if (isList(rest) && cg_isSymbol(listCar(rest))) {
+                /* 常量定义（编译期折叠；顶层绑定不可 set!） */
+                const char* nm = cg_symChars(listCar(rest));
+                int64_t v;
+                if (!fold_const(&c, listCar(listCdr(rest)), &v)) { snprintf(err,errlen,"%s", c.err); return -1; }
+                ct_add(&c.ct, nm, v);
+                continue;
+            }
+            snprintf(err,errlen,"define: (define name expr) or (define (name params) body)");
+            return -1;
         }
-        entryIdx = i;   /* 最后一个非 define 表单即入口 */
+        entryIdx = i;
     }
-    if (entryIdx < 0) { snprintf(err, errlen, "no entry expression to compile"); goto fail; }
+    if (entryIdx < 0 && c.ft.n == 0) { snprintf(err,errlen,"nothing to compile"); return -1; }
 
-    /* 编译入口表达式 → x86_64，并以 ret 结尾 */
-    if (!cg_expr(forms[entryIdx], &tab, &text, err, errlen)) goto fail;
+    /* ---- 注册函数符号（值占位 0，发射后回填） ---- */
+    CGBuf text; cg_init(&text);
+    for (int i = 0; i < c.ft.n; i++) c.ft.f[i].symidx = i;   /* 符号表下标 = 注册顺序 */
+
+    /* ---- 第二遍：发射每个函数 ---- */
+    for (int i = 0; i < c.ft.n; i++) {
+        c.text_base = text.len;
+        if (!cg_compile_function(&c, &c.ft.f[i], &text)) { snprintf(err,errlen,"%s", c.err); goto fail; }
+    }
+
+    /* ---- 入口（自带栈帧：入口里的 define/while 局部槽才安全） ---- */
+    size_t entry_off = text.len;
+    c.text_base = 0;              /* 入口直接写进 text（out 即最终位置），故 base=0 */
+    c.out = &text; scope_reset(&c); c.err[0] = 0;
+    cg_prologue(&text);
+    if (entryIdx >= 0) {
+        /* 最后一个顶层表达式作为入口 */
+        if (!cg_expr(&c, forms[entryIdx])) { snprintf(err,errlen,"%s", c.err); goto fail; }
+        if (lab_resolve(&c) != 0) { snprintf(err,errlen,"%s", c.err); goto fail; }
+    } else {
+        int mi = -1;
+        for (int i = 0; i < c.ft.n; i++) if (strcmp(c.ft.f[i].name,"main")==0) { mi = i; break; }
+        if (mi < 0) { snprintf(err,errlen,"no entry expression and no 'main' function"); goto fail; }
+        if (!cg_call_by_index(&c, mi, NIL_VAL)) { snprintf(err,errlen,"%s", c.err); goto fail; }
+    }
+    cg_leave(&text);
     cg_ret(&text);
+    c.out = NULL;
 
-    /* 组装 NUC：.text = 编译出的机器码，入口偏移 0，无重定位 */
+    /* ---- 组装 NUC ---- */
     NucBuilder* nb = nuc_builder_new();
     nuc_builder_set_flags(nb, NUC_FLAG_64BIT | NUC_FLAG_STATIC);
-    nuc_builder_set_entry(nb, 0);
+    nuc_builder_set_entry(nb, (uint32_t)entry_off);   /* §9.1: entry_point = .text 段内偏移 */
     nuc_builder_set_stack(nb, 0x800000);
+    /* 符号：所有函数（FUNC/LOCAL，shndx=0 即 .text，value=段内偏移） */
+    for (int i = 0; i < c.ft.n; i++)
+        nuc_builder_add_symbol(nb, c.ft.f[i].name, NUC_SYM_FUNC, NUC_BIND_LOCAL, 0,
+                               c.ft.f[i].offset, c.ft.f[i].size);
     nuc_builder_add_segment(nb, NUC_SEG_TEXT, 0x400000, text.len,
                             NUC_VM_READ | NUC_VM_EXEC | NUC_VM_USER, text.p, (uint32_t)text.len);
+    /* 重定位：调用点 VA = text.vaddr + rel32 偏移（§7.1/§7.2） */
+    for (int i = 0; i < c.nrel; i++)
+        nuc_builder_add_reloc(nb, 0x400000 + (uint64_t)c.rels[i].text_pos, R_X86_64_PC32,
+                              (uint32_t)c.rels[i].symidx);
+
     size_t n; uint8_t* blob = nuc_builder_build(nb, &n, err, errlen);
     nuc_builder_free(nb);
-    free(text.p);
     if (!blob) goto fail;
     *out = blob; *out_size = n;
 
-    for (int i = 0; i < tab.n; i++) free(tab.c[i].name);
-    free(tab.c);
+    free(text.p);
+    for (int i = 0; i < c.ct.n; i++) free(c.ct.c[i].name);
+    free(c.ct.c);
+    for (int i = 0; i < c.ft.n; i++) free(c.ft.f[i].name);
+    free(c.ft.f);
+    free(c.vars); free(c.labs); free(c.fixs); free(c.rels);
     return 0;
 
 fail:
     free(text.p);
-    for (int i = 0; i < tab.n; i++) free(tab.c[i].name);
-    free(tab.c);
+    for (int i = 0; i < c.ct.n; i++) free(c.ct.c[i].name);
+    free(c.ct.c);
+    for (int i = 0; i < c.ft.n; i++) free(c.ft.f[i].name);
+    free(c.ft.f);
+    free(c.vars); free(c.labs); free(c.fixs); free(c.rels);
     return -1;
 }
