@@ -16,3 +16,6 @@ Thumbs.db
 
 # ===== 不追踪 ISO / 系统镜像（在父目录 E:/novus-os/system） =====
 *.iso
+
+# ===== WorkBuddy 内部项目记忆/数据（非 Mochi 模块本身，不进远程仓库） =====
+.workbuddy/
