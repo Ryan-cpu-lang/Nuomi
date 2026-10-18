@@ -275,6 +275,46 @@ static Value natStr(int c, Value* a, Env* e) {
     return OBJ_VAL(str);
 }
 
+/* ---------- 输入 ---------- */
+/* input [提示]：从 stdin 读一行（去掉换行），返回字符串。
+   可选的第一个参数作为提示（原样输出、不带引号）。 */
+static Value natInput(int c, Value* a, Env* e) {
+    (void)e;
+    if (c >= 1 && IS_OBJ(a[0]) && AS_OBJ(a[0])->type == OBJ_STRING) {
+        fputs(((ObjString*)AS_OBJ(a[0]))->chars, stdout);
+        fflush(stdout);
+    }
+    char buf[512];
+    if (!fgets(buf, sizeof(buf), stdin)) {
+        ObjString* s = internString("", 0, false);
+        retain(OBJ_VAL(s));
+        return OBJ_VAL(s);
+    }
+    int len = (int)strlen(buf);
+    while (len > 0 && (buf[len-1] == '\n' || buf[len-1] == '\r')) buf[--len] = '\0';
+    ObjString* s = internString(buf, len, false);
+    retain(OBJ_VAL(s));
+    return OBJ_VAL(s);
+}
+/* input-int [提示]：从 stdin 读一行并解析为整数，返回数字。
+   非数字或空行返回 0。可选的第一个参数作为提示。 */
+static Value natInputInt(int c, Value* a, Env* e) {
+    (void)e;
+    if (c >= 1 && IS_OBJ(a[0]) && AS_OBJ(a[0])->type == OBJ_STRING) {
+        fputs(((ObjString*)AS_OBJ(a[0]))->chars, stdout);
+        fflush(stdout);
+    }
+    char buf[512];
+    if (!fgets(buf, sizeof(buf), stdin)) return NUM_VAL(0);
+    int len = (int)strlen(buf);
+    while (len > 0 && (buf[len-1] == '\n' || buf[len-1] == '\r')) buf[--len] = '\0';
+    char* p = buf;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p == '\0') return NUM_VAL(0);
+    double v = strtol(p, NULL, 10);
+    return NUM_VAL(v);
+}
+
 /* ---------- 注册 ---------- */
 static void defNative(Env* g, const char* name, NativeFn fn) {
     ObjNative* nat = (ObjNative*)allocObj(sizeof(ObjNative), OBJ_NATIVE);
@@ -311,4 +351,6 @@ void registerNatives(Env* g) {
     defNative(g, "set", natSet);
     defNative(g, "vec", natVec);
     defNative(g, "str", natStr);
+    defNative(g, "input", natInput);
+    defNative(g, "input-int", natInputInt);
 }
