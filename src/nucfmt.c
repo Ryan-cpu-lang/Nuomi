@@ -326,22 +326,62 @@ NucValidate nuc_validate(const NucFile* f) {
         return (NucValidate){ NOVUS_EINVAL, "not 64-bit (compile_flag bit0 must be 1)" };
     if (f->seg_count < 1 || f->seg_count > 16)
         return (NucValidate){ NOVUS_EINVAL, "seg_count out of range [1,16]" };
+
+    /* §3.2: reserved 区（0x20 起）必须全 0 */
+    for (int i = 32; i < NUC_HDR_SIZE; i++)
+        if (f->raw[i] != 0)
+            return (NucValidate){ NOVUS_EINVAL, "reserved header bytes must be zero" };
+
+    /* §2 布局铁律 + §12: 段表/符号表/重定位表/字符串表不得越出文件 */
+    uint64_t segTblEnd = (uint64_t)NUC_HDR_SIZE + (uint64_t)f->seg_count * 32u;
+    uint64_t symTblEnd = segTblEnd + (uint64_t)f->symtab_count * 24u;
+    if (symTblEnd > f->raw_size)
+        return (NucValidate){ NOVUS_EOVERFLOW, "segment/symbol table exceeds file size" };
+    if (f->rel_count > 0 &&
+        ((uint64_t)f->rel_offset < symTblEnd ||
+         (uint64_t)f->rel_offset + (uint64_t)f->rel_count * 16u > f->raw_size))
+        return (NucValidate){ NOVUS_EOVERFLOW, "relocation table out of bounds or overlaps" };
+    if ((uint64_t)f->strtab_offset >= f->raw_size)
+        return (NucValidate){ NOVUS_EOVERFLOW, "string table offset out of bounds" };
+
     if (f->compile_flag & NUC_FLAG_STATIC) {
         for (uint16_t i = 0; i < f->symtab_count; i++)
             if (f->symbols[i].bind == NUC_BIND_EXTERN)
                 return (NucValidate){ NOVUS_EINVAL, "static binary must not have EXTERN symbols" };
     }
-    /* 段权限：TEXT 必须 R+X 且不可写；DATA 不可执行（W^X） */
+    /* §5/§7.3: 符号名偏移/段索引、重定位符号索引须合法；重定位类型仅 32/PC32 */
+    for (uint16_t i = 0; i < f->symtab_count; i++) {
+        if (f->symbols[i].name_off >= f->strtab_size)
+            return (NucValidate){ NOVUS_EOVERFLOW, "symbol name offset out of string table" };
+        if (f->symbols[i].shndx != 0 && f->symbols[i].shndx >= f->seg_count)
+            return (NucValidate){ NOVUS_EOVERFLOW, "symbol shndx out of range" };
+    }
+    for (uint32_t i = 0; i < f->rel_count; i++) {
+        if (f->relocs[i].sym_idx >= f->symtab_count)
+            return (NucValidate){ NOVUS_EOVERFLOW, "reloc sym_idx out of range" };
+        if (f->relocs[i].r_type != R_X86_64_32 && f->relocs[i].r_type != R_X86_64_PC32)
+            return (NucValidate){ NOVUS_EINVAL, "unsupported relocation type (only R_X86_64_32/PC32)" };
+    }
+
+    /* 段规则：§4.3 VM_USER 必置；§4.4 TEXT=R+X、DATA 不可执行（W^X）、BSS 不占文件；§2 段数据不越界 */
     for (uint16_t i = 0; i < f->seg_count; i++) {
         const NucSegment* s = &f->segments[i];
+        if (!(s->flags & NUC_VM_USER))
+            return (NucValidate){ NOVUS_EINVAL, "segment must set VM_USER (bit3)" };
         if (s->type == NUC_SEG_TEXT) {
-            if (!(s->flags & NUC_VM_EXEC) || (s->flags & NUC_VM_WRITE))
+            if (!(s->flags & NUC_VM_READ) || !(s->flags & NUC_VM_EXEC) || (s->flags & NUC_VM_WRITE))
                 return (NucValidate){ NOVUS_EINVAL, "TEXT must be R+X and not writable" };
+            if ((uint64_t)s->file_offset + s->size > f->raw_size)
+                return (NucValidate){ NOVUS_EOVERFLOW, "TEXT segment data exceeds file size" };
         }
-        if (s->type == NUC_SEG_DATA) {
-            if (s->flags & NUC_VM_EXEC)
+        if (s->type == NUC_SEG_DATA || s->type == NUC_SEG_RODATA) {
+            if (s->type == NUC_SEG_DATA && (s->flags & NUC_VM_EXEC))
                 return (NucValidate){ NOVUS_EINVAL, "DATA must not be executable (W^X)" };
+            if ((uint64_t)s->file_offset + s->size > f->raw_size)
+                return (NucValidate){ NOVUS_EOVERFLOW, "segment data exceeds file size" };
         }
+        if (s->type == NUC_SEG_BSS && s->file_offset != 0)
+            return (NucValidate){ NOVUS_EINVAL, "BSS must not occupy file space (file_offset must be 0)" };
     }
     return (NucValidate){ NOVUS_OK, "valid NUC V1.0" };
 }

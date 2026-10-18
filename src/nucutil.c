@@ -58,31 +58,34 @@ static NucSegment* find_text_seg(NucFile* f) {
         if (f->segments[i].type == NUC_SEG_TEXT) return &f->segments[i];
     return NULL;
 }
-static void apply_pc32_relocs(NucFile* f, NucSegment* text, uint8_t* base) {
+static void apply_relocs(NucFile* f, NucSegment* text, uint8_t* base) {
     for (uint32_t i = 0; i < f->rel_count; i++) {
         NucReloc* r = &f->relocs[i];
-        if (r->r_type != R_X86_64_PC32) {
-            fprintf(stderr, "reloc type %u unsupported by host runner (skipped)\n", r->r_type);
-            continue;
-        }
         uint64_t sym_vaddr = 0;
         if (r->sym_idx < f->symtab_count) {
             NucSymbol* s = &f->symbols[r->sym_idx];
             sym_vaddr = s->value + f->segments[s->shndx].vaddr;
         }
-        int64_t rel32 = (int64_t)sym_vaddr - (int64_t)r->r_offset - 4;
         uint8_t* p = base + (r->r_offset - text->vaddr);
-        *(int32_t*)p = (int32_t)rel32;
+        if (r->r_type == R_X86_64_PC32) {
+            /* §7.2: *((int32_t*)r_offset) = sym_value - r_offset - 4 */
+            *(int32_t*)p = (int32_t)((int64_t)sym_vaddr - (int64_t)r->r_offset - 4);
+        } else if (r->r_type == R_X86_64_32) {
+            /* §7.2: *((uint32_t*)r_offset) = sym_value（规范声明冻结支持 1、2 两种） */
+            *(uint32_t*)p = (uint32_t)sym_vaddr;
+        } else {
+            fprintf(stderr, "reloc type %u unsupported by host runner (skipped)\n", r->r_type);
+        }
     }
 }
-/* 拷贝 TEXT 到 base、应用重定位并调用入口；返回入口返回值（保留原语义：entry = base + entry_point） */
-static int exec_text(NucFile* f, NucSegment* text, uint8_t* base) {
+/* 拷贝 TEXT 到 base、应用重定位并调用入口；返回入口返回值（64 位，勿用 int 再接！） */
+static int64_t exec_text(NucFile* f, NucSegment* text, uint8_t* base) {
     memcpy(base, f->raw + text->file_offset, text->size);
-    apply_pc32_relocs(f, text, base);
+    apply_relocs(f, text, base);
     uint8_t* entry = base + f->entry_point;
-    int (*fn)(void) = (int (*)(void))entry;
-    int rc = fn();
-    printf("entry returned: %d (0x%X)\n", rc, (unsigned)rc);
+    int64_t (*fn)(void) = (int64_t (*)(void))entry;
+    int64_t rc = fn();
+    printf("entry returned: %lld (0x%llX)\n", (long long)rc, (unsigned long long)rc);
     return rc;
 }
 /* 打开+解析+校验+定位 TEXT 段；失败返回 NULL；成功置 *out_text */
