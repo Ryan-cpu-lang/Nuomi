@@ -38,7 +38,7 @@ typedef struct {
 
 struct NucBuilder {
     NucSegment* segs; int seg_count, seg_cap; uint8_t** seg_data; uint32_t* seg_datalen;
-    struct { char* name; uint8_t type; uint8_t bind; uint16_t shndx; uint64_t value; uint64_t size; }* syms;
+    SymTmp* syms;
     int sym_count, sym_cap;
     NucReloc* rels; int rel_count, rel_cap;
     uint16_t flags;
