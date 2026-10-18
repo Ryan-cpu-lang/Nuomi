@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * main.c — 程序入口：REPL、脚本执行、以及编译模式（-c 输出 NUC 原生文件）
  */

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * reader.c — 读取器：把源码解析成 Value 组成的 AST
  * 支持： () 列表、[] 向量、' 引号缩写、; 行注释、数字、字符串、符号

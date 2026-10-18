@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * value.c — 值的内存管理（引用计数 + 全局注册表）、字符串驻留、值打印
  */

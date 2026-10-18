@@ -132,3 +132,41 @@ Header(48) → SegmentTable → SymbolTable → RelocationTable → StringTable 
 - 引用计数 GC：正常释放局部数据；**顶层闭包与全局绑定形成的环**在运行期不释放（程序结束统一回收），不造成运行期泄漏。
 - 数字统一用 `double`。
 - `nucutil run` 仅在 Windows x86_64 上做真机执行验证；其它平台只能 `dump`/`validate`。
+
+## 7. 作为 novus-os 模块接入（user/mochi/ + tools/nucutil/）
+
+本仓库目标作为 novus-os 的用户态语言模块合入官方仓库，遵循其 GPLv2 + Kbuild/Makefile 模块化惯例。
+
+### 7.1 目录映射（drop-in）
+
+| 本仓库内容 | 合入 novus-os 的位置 | 说明 |
+|------------|----------------------|------|
+| `src/*.c` `include/mochi.h` `samples/` `Makefile` `Kconfig` `LICENSE` | `user/mochi/` | Mochi 编译器 + 运行时（用户态 `.nuc` 生产者） |
+| `src/nucfmt.c` `src/nucutil.c` `include/nucfmt.h` | `tools/nucutil/` | 主机端 NUC 格式工具（构建期用） |
+
+> 注意：`nucfmt`（NUC 格式库）被**编译器（codegen）和 nucutil 共用**。
+> 合并时可二选一：① 在 `lib/nucfmt/` 放单一副本，两处都引用；② 各自包含一份。
+> 具体由系统制作人定，本仓库暂保持单仓自包含形态。
+
+### 7.2 接线方式（给 novus-os 维护者）
+
+1. 顶层 `Makefile` 的子目录列表里加入 `user/mochi` 与 `tools/nucutil`；
+2. 对应 `Kconfig` 里 `source` 本目录的 `Kconfig`（见本仓库 `Kconfig`）；
+3. 构建：`make`（交叉编译 `CROSS_COMPILE=x86_64-elf-`，默认 `gcc`）。
+
+### 7.3 ⚠️ 必须跟系统制作人确认的一处规范矛盾
+
+- novus-os **README** 写的是："内核内置 **Nuc 字节码执行引擎**，无独立 nucvm"。
+- 但**冻结的 NUC 规范 V1.0**（唯一基准文档）明确：`.text` 段装的是 **x86_64 原生机器码**，
+  重定位类型是 `R_X86_64_32` / `R_X86_64_PC32`，加载流程是"上下文切换到用户态，跳转 entry_rip"。
+
+两者自相矛盾。Mochi 后端目前按**规范**走原生机器码（Route A，x86_64 直编 `.text`），
+已验证算术用例全对。合入前请系统制作人拍板：内核加载器到底执行原生码还是字节码，
+以免我们对齐错方向。
+
+### 7.4 当前进度
+
+- 解释器：引用计数 UAF 已修复并连跑验证通过；9 个样例全过。
+- NUC 工具链：`emit-demo → validate → dump → run` 全通，`run` 返回 42 (0x2A)。
+- 后端 Route A 垂直切片：x86_64 直编 `.text`，算术 10 组用例全对（含嵌套/减法/大整数/符号引用）。
+- 待做：函数调用 + 运行时（GC、内置函数）、控制流、字符串/向量/闭包、对接 novus-os 系统调用 ABI。

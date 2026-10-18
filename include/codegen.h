@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * codegen.h — Mochi → NUC 原生可执行文件 的 x86_64 代码生成（后端路线 A）
  *

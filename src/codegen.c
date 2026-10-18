@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * codegen.c — 里程碑 1：整数算术子集 → x86_64 机器码 → NUC 文件
  *

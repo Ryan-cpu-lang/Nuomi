@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * nucutil.c — NUC 文件工具
  *   dump <file.nuc>       人类可读 dump

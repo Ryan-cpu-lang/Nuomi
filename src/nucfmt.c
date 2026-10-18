@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * nucfmt.c — NUC 格式构建 / 解析 / 校验 / dump
  * 严格遵循《NUC 可执行二进制格式规范 V1.0》。

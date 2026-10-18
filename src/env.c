@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * env.c — 环境（作用域链）
  * 变量绑定保存在一个简单的动态数组里，沿 parent 链向上查找。

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * eval.c — 求值器
  * 树遍历解释执行；特殊形式：quote/if/while/define/set!/lambda/begin/and/or

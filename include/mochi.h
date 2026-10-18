@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * mochi.h — Mochi 语言解释器公共头文件
  * 一门用 C 从零手撸的极简 Lisp 风格编程语言。
