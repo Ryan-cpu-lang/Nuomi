@@ -20,6 +20,8 @@ Nuomi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从�
 3. 双击 **`run-guess.bat`** 玩猜数字、**`run-games.bat`** 看游戏合集
 4. （可选）双击 **`make-shortcuts.bat`** 生成带 Nuomi 图标的快捷方式
 
+💾 **不想自己编译？** 直接下载预编译版（Windows x64）：[`nuomi.exe`](https://raw.githubusercontent.com/Ryan-cpu-lang/Nuomi/main/dist/windows/nuomi.exe) · [`nucutil.exe`](https://raw.githubusercontent.com/Ryan-cpu-lang/Nuomi/main/dist/windows/nucutil.exe)（已存于仓库 `dist/windows/`）
+
 ### 🖥️ Novus OS（诺维斯）
 
 直接下载 [`dist/novus/`](dist/novus/) 下**已编译好的 .nuc**，拷进 novus-os 用 shell exec 执行：
@@ -44,7 +46,7 @@ make test     # 冒烟：全部样例 + NUC 流水线
 ```
 （或 `./test-linux.sh` 一键）
 
-> 二进制不直接入库（.exe/.nuc 除外——`.nuc` 是诺维斯渠道交付物），三平台统一从源码一键构建；打 GitHub Release 后会在此附各平台预编译包。
+> 预编译交付物直接入库：`dist/windows/*.exe`（Windows x64 预编译包）、`dist/novus/*.nuc`（诺维斯渠道）。其余本地 build 产物（*.exe/*.o 等）仍不入库，三平台统一从源码一键构建。
 
 ---
 
