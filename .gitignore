@@ -13,6 +13,9 @@ nuomi_dbg.exe
 *.nuc
 *.map
 
+# ===== Nuomi IDE 运行时工作区（首次启动自动预载示例，勿入库） =====
+ide/workspace/
+
 # ===== 编辑器/OS =====
 Thumbs.db
 .DS_Store
