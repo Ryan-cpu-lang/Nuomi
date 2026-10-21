@@ -3,10 +3,11 @@
 ;;   运行：nuomi snake.nuomi（或拖到桌面「运行Nuomi脚本.bat」上）
 ;;   操作：方向键 或 WASD 移动，Esc 退出；游戏结束后按 R 重开
 ;; ------------------------------------------------------------
-;;   本脚本依赖 2026-10-21 新加的 5 个实时游戏原语：
-;;     cls 清屏 / show-cursor 恢复光标 / sleep 毫秒延时
-;;     key 非阻塞键盘（方向键返回 'up 'down 'left 'right，Esc 返回 'esc）
-;;     random n 取 [0,n) 随机整数
+;;   本脚本依赖 2026-10-21 新加的实时游戏原语：
+;;     cls 清屏（只用于开局/结束的一次性清场）
+;;     home 光标归位 + 隐光标（不清屏——每帧抹全屏就是闪瞎眼的根因）
+;;     draw 把整个画面拼成一个大字符串一次写出（控制台整帧呈现，不撕裂）
+;;     sleep 毫秒延时 / key 非阻塞键盘 / random 随机数
 ;;   画面每帧全量重绘，边框与角色用 ASCII，任何代码页下都不乱码。
 ;; ============================================================
 
@@ -115,16 +116,21 @@
     (set! x (+ x 1)))
   (str s "|"))
 
-(define (render)
-  (cls)
-  (println "  贪吃蛇 · Nuomi        得分: " score)
-  (println (hbar))
+;; 整个画面拼成**一个**大字符串（行间用 \n 分隔，末行不带 \n）
+(define (frame-string)
+  (define s (str "  贪吃蛇 · Nuomi        得分: " score "\n" (hbar) "\n"))
   (define y 0)
   (while (< y FH)
-    (println (build-row y))
+    (set! s (str s (build-row y) "\n"))
     (set! y (+ y 1)))
-  (println (hbar))
-  (println "  方向键/WASD 移动 · Esc 退出"))
+  (str s (hbar) "\n  方向键/WASD 移动 · Esc 退出"))
+
+;; 每帧：光标归位 + 整帧一次写出。
+;; 不清屏（cls 抹全屏就是闪瞎眼的根因），所有行等宽，旧画面自然被覆盖；
+;; draw 一次 fwrite 写完，控制台整帧呈现，不会看到画到一半的半成品。
+(define (render)
+  (home)
+  (draw (frame-string)))
 
 ;; ---------- 输入 ----------
 (define (opposite? a b)
@@ -175,13 +181,12 @@
 
 (define (game-over)
   (show-cursor)
-  (cls)
-  (println "")
-  (println "  ========================")
-  (println "       游戏结束！")
-  (println "       最终得分: " score)
-  (println "  ========================")
-  (println "  按 R 重开一局，按 Esc 退出"))
+  (cls)   ;; 一次性清场（静态画面，无所谓闪）
+  (draw (str "\n  ========================\n"
+             "       游戏结束！\n"
+             "       最终得分: " score "\n"
+             "  ========================\n"
+             "  按 R 重开一局，按 Esc 退出\n")))
 
 ;; 等重开/退出。返回 true = 重开，false = 退出。
 (define (wait-restart)
@@ -193,6 +198,7 @@
 
 ;; ---------- 主流程 ----------
 (define (main)
+  (cls)      ;; 开局清一次场（清掉启动器回显等残留），之后每帧只归位重绘
   (init)
   (render)
   (define again true)

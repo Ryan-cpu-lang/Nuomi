@@ -140,10 +140,11 @@ nuomi> (sq 9)
 | `(str a b c)` | 拼接成字符串 |
 | `(print ...) (println ...)` | 输出 |
 | `(input [提示])` `(input-int [提示])` | 行式输入（读到回车为止） |
-| `(cls)` `(show-cursor)` | 清屏+归位+隐光标 / 恢复光标 |
+| `(cls)` `(home)` `(show-cursor)` | 清屏+归位+隐光标 / 只归位+隐光标 / 恢复光标 |
 | `(sleep 毫秒)` | 延时 |
 | `(key)` | **非阻塞**键盘：无按键返回 `nil`；方向键返回 `'up` `'down` `'left` `'right`；Esc 返回 `'esc`；普通键返回单字符字符串 |
 | `(random n)` | `[0, n)` 随机整数（LCG + 时间种子） |
+| `(draw s)` | **原样**输出字符串（不加引号），一次 `fwrite` 写完——游戏整帧输出用 |
 
 值类型：数字（double）、布尔 `true`/`false`、空 `nil`、字符串、符号、链表、向量、函数/闭包。
 
@@ -151,7 +152,9 @@ nuomi> (sq 9)
 
 > ⚠️ **链表 vs 向量是两套操作**：`car`/`cdr`/`cons`/`null?` 只作用于链表；`get`/`set` 只作用于向量。`(car [1 2])` 不报错、静默返回 `nil`，别混用。
 >
-> 🎮 `cls`/`sleep`/`key`/`random` 是 2026-10-21 为实时游戏加的原语（Windows 走 Win32 控制台 + conio，其他平台 ANSI 兜底、无键盘）。贪吃蛇示例见 `samples/snake.nuomi`。
+> 🎮 `cls`/`home`/`sleep`/`key`/`random`/`draw` 是 2026-10-21 为实时游戏加的原语（Windows 走 Win32 控制台 + conio，其他平台 ANSI 兜底、无键盘）。贪吃蛇示例见 `samples/snake.nuomi`。
+>
+> 💡 **游戏防闪烁三件套**（`samples/snake.nuomi` 实测有效）：每帧**不要** `cls` 清屏（抹全屏就是闪瞎眼的根因）——用 `home` 只把光标移回左上角，所有行等宽重绘自然覆盖旧画面；再把整帧拼成**一个**字符串用 `draw` 一次写出，控制台整帧呈现，不会看到画到一半的半成品。
 
 > **递归深度**：约 3700+ 层函数递归安全可用（早期版本约 500 层即栈溢出）；超出会输出可读报错 `maximum recursion depth exceeded` 并终止，不会崩溃。
 

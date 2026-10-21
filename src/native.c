@@ -358,6 +358,35 @@ static Value natShowCursor(int c, Value* a, Env* e) {
     return NIL_VAL;
 }
 
+/* home：光标归位 + 隐藏光标，**不清屏**。
+ * 清屏是游戏闪烁的根因——每帧把整屏抹白再重画，眼睛直接看瞎。
+ * 正确做法是每帧只把光标移回左上角重绘（画面每行等宽，旧内容自然被覆盖），
+ * 配合 draw 整帧一次写出，控制台整帧呈现，不再有半成品画面。 */
+static Value natHome(int c, Value* a, Env* e) {
+    (void)c; (void)a; (void)e;
+    conEnsure();
+    COORD home = { 0, 0 };
+    SetConsoleCursorPosition(g_conOut, home);
+    CONSOLE_CURSOR_INFO ci;
+    if (GetConsoleCursorInfo(g_conOut, &ci)) { ci.bVisible = FALSE; SetConsoleCursorInfo(g_conOut, &ci); }
+    return NIL_VAL;
+}
+
+/* draw 文本：原样输出字符串——不加引号（print 会加）、不加换行、**一次 fwrite 写完**。
+ * 游戏每帧把整个画面拼成一个大字符串交给它：一次系统调用 → 控制台整帧更新，
+ * 不会像分 22 次写那样看到画到一半的画面（撕裂）。 */
+static Value natDraw(int c, Value* a, Env* e) {
+    (void)e;
+    if (c < 1 || !IS_OBJ(a[0]) || AS_OBJ(a[0])->type != OBJ_STRING) {
+        runtimeError("draw expects a string");
+        return NIL_VAL;
+    }
+    ObjString* s = (ObjString*)AS_OBJ(a[0]);
+    fwrite(s->chars, 1, (size_t)s->length, stdout);
+    fflush(stdout);
+    return NIL_VAL;
+}
+
 /* sleep 毫秒：游戏帧延时 */
 static Value natSleep(int c, Value* a, Env* e) {
     (void)e;
@@ -427,6 +456,23 @@ static Value natCls(int c, Value* a, Env* e) {
 static Value natShowCursor(int c, Value* a, Env* e) {
     (void)c; (void)a; (void)e;
     fputs("\x1B[?25h", stdout);
+    fflush(stdout);
+    return NIL_VAL;
+}
+static Value natHome(int c, Value* a, Env* e) {
+    (void)c; (void)a; (void)e;
+    fputs("\x1B[H\x1B[?25l", stdout);
+    fflush(stdout);
+    return NIL_VAL;
+}
+static Value natDraw(int c, Value* a, Env* e) {
+    (void)e;
+    if (c < 1 || !IS_OBJ(a[0]) || AS_OBJ(a[0])->type != OBJ_STRING) {
+        runtimeError("draw expects a string");
+        return NIL_VAL;
+    }
+    ObjString* s = (ObjString*)AS_OBJ(a[0]);
+    fwrite(s->chars, 1, (size_t)s->length, stdout);
     fflush(stdout);
     return NIL_VAL;
 }
@@ -850,12 +896,14 @@ void registerNatives(Env* g) {
     defNative(g, "input", natInput);
     defNative(g, "input-int", natInputInt);
 
-    /* 终端 / 游戏原语（cls / show-cursor / sleep / key / random） */
+    /* 终端 / 游戏原语（cls / home / show-cursor / sleep / key / random / draw） */
     defNative(g, "cls", natCls);
+    defNative(g, "home", natHome);
     defNative(g, "show-cursor", natShowCursor);
     defNative(g, "sleep", natSleep);
     defNative(g, "key", natKey);
     defNative(g, "random", natRandom);
+    defNative(g, "draw", natDraw);
 
     /* 高阶函数与列表工具 */
     defNative(g, "map", natMap);
