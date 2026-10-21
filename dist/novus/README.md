@@ -29,4 +29,4 @@ nuomi -c src/fact.nuomi -o fact.nuc
 - NUC V1.0（64 位 / STATIC / LOCAL 符号 / `R_X86_64_PC32` 重定位）
 - 入口：`entry_rip = text.vaddr + entry_point`（规范 §9.1）
 - 跨函数调用经符号表 + 重定位，由 novus 加载器在装载期解析（规范 §5/§7.3）
-- 当前编译子集：整数 + 函数(递归) + 局部变量 + if/while/begin + 比较 + **let / let\* / letrec**；**无 I/O**（待 novus 系统调用号表公布）
+- 当前编译子集：整数 + 函数(递归) + 局部变量 + if/while/begin + 比较 + **let / let\* / letrec** + **字符串字面量（RODATA 段）**；**无 I/O**（待 novus 系统调用号表公布）

@@ -58,6 +58,17 @@ static NucSegment* find_text_seg(NucFile* f) {
         if (f->segments[i].type == NUC_SEG_TEXT) return &f->segments[i];
     return NULL;
 }
+static NucSegment* find_rodata_seg(NucFile* f) {
+    for (uint16_t i = 0; i < f->seg_count; i++)
+        if (f->segments[i].type == NUC_SEG_RODATA) return &f->segments[i];
+    return NULL;
+}
+/* 宿主执行时给 RODATA 找的映射位置：TEXT 之后紧跟，保证 lea rax,[rip+d] 能落到数据上。
+ * 必须与编译期假定的「RODATA_vaddr - TEXT_vaddr」差值一致，否则 RIP 相对寻址会指错。
+ * 编译期用 DATA_VADDR(0x500000) - TEXT_VADDR(0x400000) = 0x100000，
+ * 故这里取 TEXT 实际基址 + 0x100000（并确保有足够空间）。 */
+#define RODATA_VA_DELTA 0x100000u
+
 static void apply_relocs(NucFile* f, NucSegment* text, uint8_t* base) {
     /* 宿主实际映射地址与规范里的逻辑 vaddr 未必相等（VirtualAlloc/mmap 给的是随机地址）。
      * 重定位算的是「字节偏移差」，与绝对地址无关，因此先把符号值换算成段内偏移，
@@ -111,9 +122,17 @@ static NucFile* run_load(const char* path, NucSegment** out_text) {
 #include <windows.h>
 static int run_nuc(const char* path) {
     NucSegment* text; NucFile* f = run_load(path, &text); if (!f) return 1;
-    uint8_t* base = (uint8_t*)VirtualAlloc(NULL, (SIZE_T)text->size,
+    /* 一次性映射 TEXT 及其后的 RODATA 空隙（RODATA 被放在 TEXT 基址 + RODATA_VA_DELTA，
+     * 与编译期假定的段间虚拟地址差一致，lea rax,[rip+d] 才能正确解析到字符串）。 */
+    size_t span = (size_t)RODATA_VA_DELTA + 0x1000;
+    if ((size_t)text->size > span) span = text->size;
+    uint8_t* base = (uint8_t*)VirtualAlloc(NULL, span,
                                            MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
     if (!base) { fprintf(stderr, "VirtualAlloc failed\n"); nuc_file_free(f); return 1; }
+    /* 把 RODATA 拷到 base + RODATA_VA_DELTA */
+    NucSegment* ro = find_rodata_seg(f);
+    if (ro && ro->file_offset)
+        memcpy(base + RODATA_VA_DELTA, f->raw + ro->file_offset, ro->size);
     exec_text(f, text, base);
     VirtualFree(base, 0, MEM_RELEASE);
     nuc_file_free(f);

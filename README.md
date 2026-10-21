@@ -11,7 +11,7 @@ Nuomi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从�
 
 ## 📥 下载（Windows / Novus / Linux）
 
-> 当前版本：**Route-A M2** —— 解释器全功能；编译器支持 整数 / 函数(递归) / 局部变量 / if·while /比较 → `.nuc`
+> 当前版本：**Route-A M3** —— 解释器全功能；编译器支持 整数 / 函数(递归) / 局部变量 / if·while / 比较 / **let·let\*·letrec** / **字符串字面量** → `.nuc`
 
 ### 🪟 Windows
 
@@ -37,7 +37,7 @@ Nuomi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从�
 
 - 详见 [`dist/novus/README.md`](dist/novus/README.md)（校验 / 重新编译方法）
 - 自编程序：宿主机上 `nuomi -c 程序.nuomi -o 程序.nuc`
-- ⚠️ 编译子集暂无 I/O（待 novus 系统调用号表公布）
+- ⚠️ 编译子集暂无 I/O（`print`/`println` 等内置函数暂不能编译，待 novus 系统调用号表公布）
 
 ### 🐧 Linux
 
@@ -127,6 +127,7 @@ nuomi> (sq 9)
 | `(lambda (a) body...)` | 匿名函数（闭包） |
 | `(begin a b c)` | 顺序执行，返回最后一个 |
 | `'x` | 引号（不求值） |
+| `❝hello❞` | 字符串（**推荐定界符**，免转义）/ `"hello"` 传统写法同样可用 |
 | `(map fn coll)` `(filter pred coll)` `(reduce fn coll [init])` | **高阶函数** |
 | `(range n [end [step]])` | 数字序列（支持负步长） |
 | `(reverse coll)` `(append a b)` `(last coll)` `(null? x)` `(member? x coll)` | 序列工具 |

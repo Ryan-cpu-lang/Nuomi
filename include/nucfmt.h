@@ -22,6 +22,28 @@
 #define NUC_SEG_BSS    2
 #define NUC_SEG_RODATA 3
 
+/* ---- Nuomi 字符串的运行时内存布局（编译产物专用）----
+ *
+ * 刻意不采用主流语言常见的「两字指针(指针,长度) + 独立字符数组」布局，
+ * 而是给每个字符串一个**自描述头部**：
+ *
+ *   offset 0   int64_t  len    字节数（不含头部）
+ *   offset 8   int64_t  hash   内容哈希（FNV-1a），供运行时快速比较/查重
+ *   offset 16  char[]   字节数据（非 NUL 结尾；长度以 len 字段为准）
+ *   总大小 = 16 + len，按 8 字节向上对齐
+ *
+ * 好处：
+ *   ① 单个指针即代表整个字符串，传递只用一个寄存器，不必传 (ptr,len) 对；
+ *   ② 比较字符串前先比 hash，不等才逐字节 —— 大量相等性判断会变快；
+ *   ③ 头部让运行时能自省长度，无需外部元数据；
+ *   ④ 数据段里天然紧凑，可直接 memcmp。
+ *
+ * 代码里取字段用 NUOMI_STR_LEN / NUOMI_STR_HASH / NUOMI_STR_BYTES，
+ * 避免各处硬编码 16这个数字。
+ */
+#define NUOMI_STR_HEADER   16
+#define NUOMI_STR_BYTES(sz) (NUOMI_STR_HEADER + (((sz) + 7u) & ~7u))
+
 /* 段权限位 */
 #define NUC_VM_READ   1
 #define NUC_VM_WRITE  2

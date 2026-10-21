@@ -98,12 +98,15 @@ static void cg_store_rax_local(CGBuf* b, int disp) {
  *   mod=00 → 无位移（rm=101 时例外，见下）    mod=01 → disp8
  *   mod=10 → disp32
  * 「rbp + 负位移」的 1 字节符号扩展形式必须用 mod=01（ModRM = 0x55 表示 reg=rdx），
- * 曾误写成 mod=10（0x95）却只给 1 字节位移，CPU 会把后续字节当作 disp32 继续读，
+ * 曾误写成 mod=10（0x95）却只给1 字节位移，CPU 会把后续字节当作 disp32 继续读，
  * 整条指令错位 → 生成的 .nuc 一执行就崩。 */
 static void cg_store_rdx_local(CGBuf* b, int disp) {
     if (disp >= -128) { cg_u8(b,0x48); cg_u8(b,0x89); cg_u8(b,0x55); cg_u8(b,(uint8_t)disp); }  /* mod=01 */
     else              { cg_u8(b,0x48); cg_u8(b,0x89); cg_u8(b,0x95); cg_u32(b,(uint32_t)(int32_t)disp); } /* mod=10 */
 }
+/* lea rax, [rip+disp32] (48 8D 05 xx xx xx xx) —— 取 RODATA 里字符串的地址。
+ * 用 RIP 相对寻址：位置无关，且只需7 字节；disp32 在链接/装载期由重定位补上。 */
+static void cg_lea_rax_rip(CGBuf* b) { cg_u8(b,0x48); cg_u8(b,0x8D); cg_u8(b,0x05); cg_u32(b,0); }
 
 /* ====================== 符号辅助 ====================== */
 static char* cg_strdup(const char* s) { size_t l = strlen(s)+1; char* p = (char*)malloc(l); memcpy(p,s,l); return p; }
@@ -143,6 +146,45 @@ typedef struct { char* name; int disp; } Local;
 /* 重定位（记录最终 .text 内偏移，构建时换算成 VA） */
 typedef struct { size_t text_pos; int symidx; } CGRel;
 
+/* ---- 只读数据段（字符串字面量）----
+ * 布局见 nucfmt.h 的「Nuomi 字符串的运行时内存布局」：
+ *   [int64 len][int64 hash][bytes...]，整体按 8 字节对齐。
+ * 字符串引用表达式的值 = 该字符串首字节的地址（一个指针即可代表整串）。 */
+typedef struct { CGBuf buf; uint64_t vaddr; } CGRodata;
+
+/* FNV-1a 64 位哈希：运行时比较字符串前先比它 */
+static uint64_t nuomiHash(const uint8_t* d, size_t n) {
+    uint64_t h = 1469598103934665603ULL;
+    for (size_t i = 0; i < n; i++) { h ^= d[i]; h *= 1099511628211ULL; }
+    return h;
+}
+
+/* 把一个字符串字面量放进 RODATA，返回它在段内的偏移 */
+static size_t rodataAddStr(CGRodata* rd, const char* s, int len) {
+    /* 去重：完全相同的字面量只存一份，运行时比较与体积都受益 */
+    for (size_t off = 0; off + NUOMI_STR_HEADER <= rd->buf.len; ) {
+        int64_t elen;
+        memcpy(&elen, rd->buf.p + off, 8);
+        size_t total = NUOMI_STR_BYTES((size_t)elen);
+        if (elen == len && memcmp(rd->buf.p + off + NUOMI_STR_HEADER, s, (size_t)len) == 0)
+            return off;                       /* 命中已有字面量 */
+        off += total;
+    }
+    size_t start = rd->buf.len;
+    uint64_t hash = nuomiHash((const uint8_t*)s, (size_t)len);
+    size_t total = NUOMI_STR_BYTES((size_t)len);
+    uint8_t pad[NUOMI_STR_HEADER + 8];
+    memset(pad, 0, sizeof pad);
+    int64_t l64 = (int64_t)len, h64 = (int64_t)hash;
+    memcpy(pad, &l64, 8);
+    memcpy(pad + 8, &h64, 8);
+    cg_put(&rd->buf, pad, NUOMI_STR_HEADER);
+    cg_put(&rd->buf, (const uint8_t*)s, (size_t)len);
+    size_t tail = total - NUOMI_STR_HEADER - (size_t)len;   /* 补齐到 8 字节对齐 */
+    for (size_t i = 0; i < tail; i++) cg_u8(&rd->buf, 0);
+    return start;
+}
+
 /* ====================== 编译上下文 ====================== */
 typedef struct {
     FuncTab ft;
@@ -159,8 +201,22 @@ typedef struct {
     /* 重定位收集（最终 .text 偏移） */
     CGRel* rels; int nrel, relcap;
     size_t text_base;  /* 本次发射内容将拼接进 .text 的起始偏移 */
+    CGRodata rodata;   /* 字符串字面量池 */
+    /* lea rax,[rip+d] 里d 的延迟回填：记录 (text内lea字段偏移, rodata内目标偏移)。
+     * text 与 rodata 最终拼进文件时的相对位置要到收尾才确定，故先记后补。 */
+    struct { size_t text_pos; size_t rodata_off; } *strfix; int nstrfix, strfixcap;
     char err[256]; size_t errlen;
 } CG;
+
+static void cg_strfix_add(CG* c, size_t text_pos, size_t rodata_off) {
+    if (c->nstrfix == c->strfixcap) {
+        c->strfixcap = c->strfixcap < 8 ? 8 : c->strfixcap * 2;
+        c->strfix = realloc(c->strfix, c->strfixcap * sizeof(*c->strfix));
+    }
+    c->strfix[c->nstrfix].text_pos = text_pos;
+    c->strfix[c->nstrfix].rodata_off = rodata_off;
+    c->nstrfix++;
+}
 
 static int lab_new(CG* c) { return c->nextlab++; }
 static void lab_mark(CG* c, int id) {
@@ -221,6 +277,7 @@ static int func_find(CG* c, const char* name) {
 }
 
 static bool cg_expr(CG* c, Value node);
+static void cg_strfix_add(CG* c, size_t text_pos, size_t rodata_off);
 
 /* 发射 call rel32 + PC32 重定位（加载期解析，天然支持前向/递归引用） */
 static bool cg_call_by_index(CG* c, int fi, Value args) {
@@ -247,6 +304,17 @@ static bool cg_call_by_index(CG* c, int fi, Value args) {
 
 static bool cg_expr(CG* c, Value node) {
     if (IS_NUM(node)) { cg_mov_rax_imm(c->out, (int64_t)AS_NUM(node)); return true; }
+    /* 字符串字面量（非符号）→放进 RODATA，值为其地址 */
+    if (IS_OBJ(node) && AS_OBJ(node)->type == OBJ_STRING && !((ObjString*)AS_OBJ(node))->isSymbol) {
+        ObjString* s = (ObjString*)AS_OBJ(node);
+        size_t off = rodataAddStr(&c->rodata, s->chars, s->length);
+        cg_lea_rax_rip(c->out);
+        /* RIP 相对位移在发射时已知：目标 RODATA vaddr + off 减 (本指令末尾 +4)，
+         * 但 text 与 rodata 何时拼进最终布局取决于后续段大小，故先记重定位、
+         * 待 text 全部确定后在收尾阶段统一回填。 */
+        cg_strfix_add(c, c->text_base + c->out->len - 4, off);
+        return true;
+    }
     if (cg_isSymbol(node)) {
         const char* nm = cg_symChars(node);
         if (strcmp(nm,"true")==0)  { cg_mov_rax_imm(c->out, 1); return true; }
@@ -607,6 +675,22 @@ int nuomi_compile_to_nuc(const char* src, uint8_t** out, size_t* out_size, char*
     c.out = NULL;
 
     /* ---- 组装 NUC ---- */
+    const uint64_t TEXT_VADDR = 0x400000;
+    const uint64_t DATA_VADDR = 0x500000;   /* RODATA紧随 TEXT 之后的固定虚拟地址 */
+    /* lea rax,[rip+d] 的 d 依赖两个段的最终相对位置，这里回填：
+     * rip 在执行时= 指令所在 TEXT 地址 + 7；目标 = RODATA_vaddr + 段内偏移。
+     * d = (DATA_VADDR + rodata_off) - (TEXT_VADDR + text_pos + 4)
+     * （text_pos 指向 disp32 字段起点，+4 是 disp32 末尾即 lea 指令末尾）。 */
+    if (c.nstrfix > 0) {
+        for (int i = 0; i < c.nstrfix; i++) {
+            size_t field = c.strfix[i].text_pos;
+            if (field + 4 > text.len) { snprintf(err, errlen, "internal: lea fixup out of range"); goto fail; }
+            int64_t rip_next = (int64_t)(TEXT_VADDR + field + 4);
+            int64_t target = (int64_t)(DATA_VADDR + c.strfix[i].rodata_off);
+            cg_patch_u32(&text, field, (uint32_t)(int32_t)(target - rip_next));
+        }
+    }
+
     NucBuilder* nb = nuc_builder_new();
     nuc_builder_set_flags(nb, NUC_FLAG_64BIT | NUC_FLAG_STATIC);
     nuc_builder_set_entry(nb, (uint32_t)entry_off);   /* §9.1: entry_point = .text 段内偏移 */
@@ -615,11 +699,15 @@ int nuomi_compile_to_nuc(const char* src, uint8_t** out, size_t* out_size, char*
     for (int i = 0; i < c.ft.n; i++)
         nuc_builder_add_symbol(nb, c.ft.f[i].name, NUC_SYM_FUNC, NUC_BIND_LOCAL, 0,
                                c.ft.f[i].offset, c.ft.f[i].size);
-    nuc_builder_add_segment(nb, NUC_SEG_TEXT, 0x400000, text.len,
+    nuc_builder_add_segment(nb, NUC_SEG_TEXT, TEXT_VADDR, text.len,
                             NUC_VM_READ | NUC_VM_EXEC | NUC_VM_USER, text.p, (uint32_t)text.len);
+    /* RODATA：字符串字面量池（只读、用户可读；绝不可执行/可写） */
+    if (c.rodata.buf.len > 0)
+        nuc_builder_add_segment(nb, NUC_SEG_RODATA, DATA_VADDR, c.rodata.buf.len,
+                                NUC_VM_READ | NUC_VM_USER, c.rodata.buf.p, (uint32_t)c.rodata.buf.len);
     /* 重定位：调用点 VA = text.vaddr + rel32 偏移（§7.1/§7.2） */
     for (int i = 0; i < c.nrel; i++)
-        nuc_builder_add_reloc(nb, 0x400000 + (uint64_t)c.rels[i].text_pos, R_X86_64_PC32,
+        nuc_builder_add_reloc(nb, TEXT_VADDR + (uint64_t)c.rels[i].text_pos, R_X86_64_PC32,
                               (uint32_t)c.rels[i].symidx);
 
     size_t n; uint8_t* blob = nuc_builder_build(nb, &n, err, errlen);
@@ -628,19 +716,21 @@ int nuomi_compile_to_nuc(const char* src, uint8_t** out, size_t* out_size, char*
     *out = blob; *out_size = n;
 
     free(text.p);
+    free(c.rodata.buf.p);
     for (int i = 0; i < c.ct.n; i++) free(c.ct.c[i].name);
     free(c.ct.c);
     for (int i = 0; i < c.ft.n; i++) free(c.ft.f[i].name);
     free(c.ft.f);
-    free(c.vars); free(c.labs); free(c.fixs); free(c.rels); free(c.scopes);
+    free(c.vars); free(c.labs); free(c.fixs); free(c.rels); free(c.scopes); free(c.strfix);
     return 0;
 
 fail:
     free(text.p);
+    free(c.rodata.buf.p);
     for (int i = 0; i < c.ct.n; i++) free(c.ct.c[i].name);
     free(c.ct.c);
     for (int i = 0; i < c.ft.n; i++) free(c.ft.f[i].name);
     free(c.ft.f);
-    free(c.vars); free(c.labs); free(c.fixs); free(c.rels); free(c.scopes);
+    free(c.vars); free(c.labs); free(c.fixs); free(c.rels); free(c.scopes); free(c.strfix);
     return -1;
 }

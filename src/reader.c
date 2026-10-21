@@ -22,6 +22,20 @@ static bool isDelimiter(char c) {
            c == '\n' || c == '\r';
 }
 
+/* Nuomi 的字符串定界符 —— 刻意区别于市面语言
+ *
+ * 常用语言都用 " 或 ' 作字符串界定（ Lisp 家族里 ' 还得挪给quote 用），
+ * 于是我们用一对排版引号 U+275D / U+275E 作**首选**字符串定界符：
+ *   ❝hello❞            字符串
+ *   "legacy"             传统界定符（保留兼容，语义完全相同）
+ *   'x                  引用（quote），与字符串彻底区分开
+ *
+ * 这样 ' 一心一意只做 quote，不会像某些 Lisp 那样 " 和 ' 语义打架；
+ * 而 ❝❞ 在主流语言里几乎没人用 —— 看到就知道是 Nuomi，辨识度拉满，
+ * 且写成对的括号一样对称，编辑器高亮也毫无压力。 */
+static const char* const STR_OPEN   = "\xE2\x9D\x9D";  /* U+275D ❝ */
+static const char* const STR_CLOSE  = "\xE2\x9D\x9E";  /* U+275E ❞ */
+
 Value readForm(Reader* r);
 
 /* 读取一个列表或向量；调用前已消费开头的 ( 或 [ */
@@ -98,19 +112,23 @@ static Value readAtom(Reader* r) {
     return v;
 }
 
-/* 读取一个字符串字面量；调用前已消费开头的 " */
-static Value readString(Reader* r) {
+/* 读取一个字符串字面量；调用前已消费开头的定界符（" 或 ❝）
+ * closeTok 传入结尾定界符串（" 为单字节；❞ 为 3 字节 UTF-8），closeLen 是其长度。 */
+static Value readString(Reader* r, const char* closeTok, size_t closeLen) {
     size_t start = r->pos;
     int len = 0;
-    while (r->pos < r->len && r->src[r->pos] != '"') {
-        if (r->src[r->pos] == '\\' && r->pos + 1 < r->len) r->pos++; /* 跳过转义 */
+    bool needEsc = (closeLen == 1);   /* 传统 " 界定符才处理转义；❝❞ 原样保留 */
+    while (r->pos < r->len) {
+        /* 命中结尾定界符？ */
+        if (r->pos + closeLen <= r->len && memcmp(r->src + r->pos, closeTok, closeLen) == 0) break;
+        if (needEsc && r->src[r->pos] == '\\' && r->pos + 1 < r->len) r->pos++; /* 跳过转义 */
         r->pos++; len++;
     }
     if (r->pos >= r->len) { rErr(r, "unterminated string"); return NIL_VAL; }
     char* buf = (char*)malloc(len + 1);
     int j = 0;
     for (size_t i = start; i < r->pos; i++) {
-        if (r->src[i] == '\\' && i + 1 < r->pos) {
+        if (needEsc && r->src[i] == '\\' && i + 1 < r->pos) {
             char nx = r->src[++i];
             if (nx == 'n') buf[j++] = '\n';
             else if (nx == 't') buf[j++] = '\t';
@@ -122,7 +140,7 @@ static Value readString(Reader* r) {
     buf[j] = '\0';
     ObjString* s = internString(buf, j, false); /* 字符串字面量 */
     free(buf);
-    r->pos++; /* 消费结尾的 " */
+    r->pos += closeLen; /* 消费结尾定界符 */
     return OBJ_VAL(s);
 }
 
@@ -134,7 +152,12 @@ Value readForm(Reader* r) {
     if (c == '[') { r->pos++; return readList(r, ']'); }
     if (c == ')') { rErr(r, "unexpected )"); return NIL_VAL; }
     if (c == ']') { rErr(r, "unexpected ]"); return NIL_VAL; }
-    if (c == '"') { r->pos++; return readString(r); }
+    if (c == '"') { r->pos++; return readString(r, "\"", 1); }
+    /* 独特定界符 ❝ ... ❞（UTF-8 各 3 字节） */
+    if (r->pos + 3 <= r->len && memcmp(r->src + r->pos, STR_OPEN, 3) == 0) {
+        r->pos += 3;
+        return readString(r, STR_CLOSE, 3);
+    }
     if (c == '\'') {
         r->pos++;
         Value q = readForm(r);
