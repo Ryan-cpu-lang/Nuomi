@@ -145,6 +145,10 @@ nuomi> (sq 9)
 | `(key)` | **非阻塞**键盘：无按键返回 `nil`；方向键返回 `'up` `'down` `'left` `'right`；Esc 返回 `'esc`；普通键返回单字符字符串 |
 | `(random n)` | `[0, n)` 随机整数（LCG + 时间种子） |
 | `(draw s)` | **原样**输出字符串（不加引号），一次 `fwrite` 写完——游戏整帧输出用 |
+| `(exists? p)` `(is-dir? p)` `(file-size p)` | 查询：存在 / 是目录 / 字节数（失败 -1） |
+| `(read-file p)` `(write-file p s)` `(append-file p s)` | 读整文件 / 覆盖写 / 追加写 |
+| `(ls dir)` | 列目录 → 文件名列表（不含 `.` `..`；失败 `nil`） |
+| `(mkdir p)` `(rmdir p)` `(delete p)` `(mv a b)` `(cp a b)` | 建目录 / 删空目录 / 删文件 / 移动 / 复制（返回布尔） |
 
 值类型：数字（double）、布尔 `true`/`false`、空 `nil`、字符串、符号、链表、向量、函数/闭包。
 
@@ -153,6 +157,8 @@ nuomi> (sq 9)
 > ⚠️ **链表 vs 向量是两套操作**：`car`/`cdr`/`cons`/`null?` 只作用于链表；`get`/`set` 只作用于向量。`(car [1 2])` 不报错、静默返回 `nil`，别混用。
 >
 > 🎮 `cls`/`home`/`sleep`/`key`/`random`/`draw` 是 2026-10-21 为实时游戏加的原语（Windows 走 Win32 控制台 + conio，其他平台 ANSI 兜底、无键盘）。贪吃蛇示例见 `samples/snake.nuomi`。
+>
+> 📁 **文件系统**：糯米在 novus 里是系统壳语言（≈ PowerShell），文件操作是基本功。宿主用 Win32 API、其他平台 POSIX，将来上 novus 换 syscall、**脚本接口不变**。软错误语义：失败返回 `nil`/`false`/`-1`，不中止程序。**故意不提供递归删除**——`rm -rf` 请用 `ls`+`delete`+`rmdir` 在脚本层自己组合（`samples/files.nuomi` 有 6 行实现）。这是真实破坏力，删了不可恢复。
 >
 > 💡 **游戏防闪烁三件套**（`samples/snake.nuomi` 实测有效）：每帧**不要** `cls` 清屏（抹全屏就是闪瞎眼的根因）——用 `home` 只把光标移回左上角，所有行等宽重绘自然覆盖旧画面；再把整帧拼成**一个**字符串用 `draw` 一次写出，控制台整帧呈现，不会看到画到一半的半成品。
 

@@ -377,6 +377,36 @@ number   := <可被 strtod 整体解析的令牌>
   3. `cls` 只留给出开局/结束的一次性清场。
 - **完整示例**：`samples/snake.nuomi`（贪吃蛇，逻辑与渲染分离，逻辑部分可无头单测）。
 
+### 7.15 文件系统（File System）
+
+糯米在 novus 里的定位是**系统壳语言**（≈ Windows 的 PowerShell），文件操作是壳的基本功。
+宿主（Windows）用 Win32 API，其他平台用 POSIX；将来跑在 novus 上时这一层换成 novus
+文件系统 syscall，**脚本接口不变**。
+
+| 函数 | 语义 |
+|------|------|
+| `(exists? p)` | 路径存在 → `true` |
+| `(is-dir? p)` | 是目录 → `true` |
+| `(file-size p)` | 字节数；失败 `-1` |
+| `(read-file p)` | 读整个文件 → 字符串（保留字节原样，可含 NUL）；失败 `nil` |
+| `(write-file p s)` | 整串覆盖写，自动创建 → 布尔 |
+| `(append-file p s)` | 追加到末尾，自动创建 → 布尔 |
+| `(ls dir)` | 目录项列表（不含 `.` 与 `..`）；失败/非目录 → `nil` |
+| `(mkdir p)` | 建目录 → 布尔 |
+| `(rmdir p)` | 删**空**目录 → 布尔 |
+| `(delete p)` | 删**文件** → 布尔 |
+| `(mv src dst)` | 移动/重命名 → 布尔 |
+| `(cp src dst)` | 复制（覆盖目标） → 布尔 |
+
+要点：
+- **软错误**：所有失败返回 `nil`/`false`/`-1` 并打印 `Runtime error`，**不中止程序**
+  （壳语言要能容忍单个命令失败，与 shell 的 `$?` 同思路）。
+- **故意没有递归删除原语**：`rm -rf` 这类破坏性操作用原语在脚本层自己组合——
+  `samples/files.nuomi` 里有 6 行实现（`ls` + `delete` + `rmdir` 递归）。
+- **`nil` 是空列表**：`map`/`filter`/`reduce` 接受 `nil` 当空集合（0 元素），
+  对空目录 `map` 不报错。
+- 路径分隔符 `/` 与 `\` 均可（Win32 两者都认；novus 用 `/`）。
+
 ---
 
 ## 8. 错误与诊断语义（重要）

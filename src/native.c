@@ -497,6 +497,296 @@ static Value natRandom(int c, Value* a, Env* e) {
 }
 #endif
 
+/* ============================================================
+ * ---------- 文件系统原语 ----------
+ * 糯米在 novus 里的定位是**系统壳语言**（≈ Windows 的 PowerShell），
+ * 文件操作是壳的基本功，所以这一组是语言的核心能力而非外挂。
+ *
+ * 实现分层：
+ *   · 宿主（Windows）：Win32 API
+ *   · 其他平台：POSIX（remove/mkdir/rename/opendir/stat/fopen）
+ *   · 将来跑在 novus 上时：这一层换成 novus 的文件系统 syscall，
+ *     **脚本接口不变**——号表集中在 include/novus_syscall.h 的思路一样。
+ *
+ * 错误语义与 Nuomi 运行时一致：**软错误**——失败返回 nil/false/-1，
+ * 打印 Runtime error 但不中止程序（壳语言要能容忍单个命令失败）。
+ *
+ * ⚠️ 这是真实破坏力：delete/rmdir 不可恢复。没有递归删除原语
+ *    （rm -rf 请在脚本里用 ls + delete + rmdir 自己递归，见 samples/files.nuomi）。
+ * ============================================================ */
+#if !defined(_WIN32)
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <dirent.h>
+#include <unistd.h>
+#endif
+static bool fsArg(Value v, const char** out) {
+    if (!IS_OBJ(v) || AS_OBJ(v)->type != OBJ_STRING) return false;
+    *out = ((ObjString*)AS_OBJ(v))->chars;
+    return true;
+}
+
+/* exists? path -> bool */
+static Value natExists(int c, Value* a, Env* e) {
+    (void)e;
+    const char* p;
+    if (c < 1 || !fsArg(a[0], &p)) { runtimeError("exists? expects a path string"); return NIL_VAL; }
+#if defined(_WIN32)
+    DWORD attr = GetFileAttributesA(p);
+    return BOOL_VAL(attr != INVALID_FILE_ATTRIBUTES);
+#else
+    struct stat st;
+    return BOOL_VAL(stat(p, &st) == 0);
+#endif
+}
+
+/* is-dir? path -> bool */
+static Value natIsDir(int c, Value* a, Env* e) {
+    (void)e;
+    const char* p;
+    if (c < 1 || !fsArg(a[0], &p)) { runtimeError("is-dir? expects a path string"); return NIL_VAL; }
+#if defined(_WIN32)
+    DWORD attr = GetFileAttributesA(p);
+    return BOOL_VAL(attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY));
+#else
+    struct stat st;
+    return BOOL_VAL(stat(p, &st) == 0 && S_ISDIR(st.st_mode));
+#endif
+}
+
+/* delete path -> bool：删**文件**。目录/不存在/被占用 → false */
+static Value natDelete(int c, Value* a, Env* e) {
+    (void)e;
+    const char* p;
+    if (c < 1 || !fsArg(a[0], &p)) { runtimeError("delete expects a path string"); return NIL_VAL; }
+#if defined(_WIN32)
+    return BOOL_VAL(DeleteFileA(p) != 0);
+#else
+    return BOOL_VAL(remove(p) == 0);
+#endif
+}
+
+/* rmdir path -> bool：删**空**目录。非空/不存在 → false */
+static Value natRmdir(int c, Value* a, Env* e) {
+    (void)e;
+    const char* p;
+    if (c < 1 || !fsArg(a[0], &p)) { runtimeError("rmdir expects a path string"); return NIL_VAL; }
+#if defined(_WIN32)
+    return BOOL_VAL(RemoveDirectoryA(p) != 0);
+#else
+    return BOOL_VAL(rmdir(p) == 0);
+#endif
+}
+
+/* mkdir path -> bool：已存在 → false */
+static Value natMkdir(int c, Value* a, Env* e) {
+    (void)e;
+    const char* p;
+    if (c < 1 || !fsArg(a[0], &p)) { runtimeError("mkdir expects a path string"); return NIL_VAL; }
+#if defined(_WIN32)
+    return BOOL_VAL(CreateDirectoryA(p, NULL) != 0);
+#else
+    return BOOL_VAL(mkdir(p, 0755) == 0);
+#endif
+}
+
+/* file-size path -> 字节数；失败 -1 */
+static Value natFileSize(int c, Value* a, Env* e) {
+    (void)e;
+    const char* p;
+    if (c < 1 || !fsArg(a[0], &p)) { runtimeError("file-size expects a path string"); return NIL_VAL; }
+#if defined(_WIN32)
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (!GetFileAttributesExA(p, GetFileExInfoStandard, &fad)) return NUM_VAL(-1);
+    unsigned long long sz = ((unsigned long long)fad.nFileSizeHigh << 32) | fad.nFileSizeLow;
+    return NUM_VAL((double)sz);
+#else
+    struct stat st;
+    if (stat(p, &st) != 0) return NUM_VAL(-1);
+    return NUM_VAL((double)st.st_size);
+#endif
+}
+
+/* read-file path -> 字符串（保留字节原样，可含 \0）；失败 nil */
+static Value natReadFile(int c, Value* a, Env* e) {
+    (void)e;
+    const char* p;
+    if (c < 1 || !fsArg(a[0], &p)) { runtimeError("read-file expects a path string"); return NIL_VAL; }
+#if defined(_WIN32)
+    HANDLE h = CreateFileA(p, GENERIC_READ, FILE_SHARE_READ, NULL,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return NIL_VAL;
+    DWORD sz = GetFileSize(h, NULL);
+    if (sz == INVALID_FILE_SIZE) { CloseHandle(h); return NIL_VAL; }
+    char* buf = (char*)malloc((size_t)sz + 1);
+    DWORD rd = 0;
+    ReadFile(h, buf, sz, &rd, NULL);
+    CloseHandle(h);
+    ObjString* s = internString(buf, (int)rd, false);
+    free(buf);
+    retain(OBJ_VAL(s));
+    return OBJ_VAL(s);
+#else
+    FILE* f = fopen(p, "rb");
+    if (!f) return NIL_VAL;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (sz < 0) { fclose(f); return NIL_VAL; }
+    char* buf = (char*)malloc((size_t)sz + 1);
+    size_t rd = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+    ObjString* s = internString(buf, (int)rd, false);
+    free(buf);
+    retain(OBJ_VAL(s));
+    return OBJ_VAL(s);
+#endif
+}
+
+/* write-file path content -> bool：整串覆盖写，自动创建 */
+static Value natWriteFile(int c, Value* a, Env* e) {
+    (void)e;
+    const char* p;
+    if (c < 2 || !fsArg(a[0], &p) || !IS_OBJ(a[1]) || AS_OBJ(a[1])->type != OBJ_STRING) {
+        runtimeError("write-file expects (path, content)");
+        return NIL_VAL;
+    }
+    ObjString* s = (ObjString*)AS_OBJ(a[1]);
+#if defined(_WIN32)
+    HANDLE h = CreateFileA(p, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return BOOL_VAL(false);
+    DWORD wr = 0;
+    BOOL ok = WriteFile(h, s->chars, (DWORD)s->length, &wr, NULL);
+    CloseHandle(h);
+    return BOOL_VAL(ok && wr == (DWORD)s->length);
+#else
+    FILE* f = fopen(p, "wb");
+    if (!f) return BOOL_VAL(false);
+    size_t wr = fwrite(s->chars, 1, (size_t)s->length, f);
+    fclose(f);
+    return BOOL_VAL(wr == (size_t)s->length);
+#endif
+}
+
+/* append-file path content -> bool：追加到末尾，自动创建 */
+static Value natAppendFile(int c, Value* a, Env* e) {
+    (void)e;
+    const char* p;
+    if (c < 2 || !fsArg(a[0], &p) || !IS_OBJ(a[1]) || AS_OBJ(a[1])->type != OBJ_STRING) {
+        runtimeError("append-file expects (path, content)");
+        return NIL_VAL;
+    }
+    ObjString* s = (ObjString*)AS_OBJ(a[1]);
+#if defined(_WIN32)
+    HANDLE h = CreateFileA(p, GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return BOOL_VAL(false);
+    SetFilePointer(h, 0, NULL, FILE_END);
+    DWORD wr = 0;
+    BOOL ok = WriteFile(h, s->chars, (DWORD)s->length, &wr, NULL);
+    CloseHandle(h);
+    return BOOL_VAL(ok && wr == (DWORD)s->length);
+#else
+    FILE* f = fopen(p, "ab");
+    if (!f) return BOOL_VAL(false);
+    size_t wr = fwrite(s->chars, 1, (size_t)s->length, f);
+    fclose(f);
+    return BOOL_VAL(wr == (size_t)s->length);
+#endif
+}
+
+/* mv src dst -> bool：移动/重命名 */
+static Value natMv(int c, Value* a, Env* e) {
+    (void)e;
+    const char *src, *dst;
+    if (c < 2 || !fsArg(a[0], &src) || !fsArg(a[1], &dst)) {
+        runtimeError("mv expects (src, dst)");
+        return NIL_VAL;
+    }
+#if defined(_WIN32)
+    return BOOL_VAL(MoveFileA(src, dst) != 0);
+#else
+    return BOOL_VAL(rename(src, dst) == 0);
+#endif
+}
+
+/* cp src dst -> bool：复制（覆盖已存在目标） */
+static Value natCp(int c, Value* a, Env* e) {
+    (void)e;
+    const char *src, *dst;
+    if (c < 2 || !fsArg(a[0], &src) || !fsArg(a[1], &dst)) {
+        runtimeError("cp expects (src, dst)");
+        return NIL_VAL;
+    }
+#if defined(_WIN32)
+    return BOOL_VAL(CopyFileA(src, dst, FALSE) != 0);
+#else
+    FILE* in = fopen(src, "rb");
+    if (!in) return BOOL_VAL(false);
+    FILE* out = fopen(dst, "wb");
+    if (!out) { fclose(in); return BOOL_VAL(false); }
+    char buf[8192];
+    size_t n;
+    bool ok = true;
+    while ((n = fread(buf, 1, sizeof buf, in)) > 0) {
+        if (fwrite(buf, 1, n, out) != n) { ok = false; break; }
+    }
+    fclose(in);
+    fclose(out);
+    return BOOL_VAL(ok);
+#endif
+}
+
+/* ls dir -> 文件名列表（不含 . 与 ..）；失败/不是目录 → nil */
+static Value natLs(int c, Value* a, Env* e) {
+    (void)e;
+    const char* p;
+    if (c < 1 || !fsArg(a[0], &p)) { runtimeError("ls expects a directory path"); return NIL_VAL; }
+    /* 先收集到 C 数组，再逆序 cons 成 Nuomi 链表 */
+    char** names = NULL;
+    int n = 0, cap = 0;
+#if defined(_WIN32)
+    size_t plen = strlen(p);
+    char* pat = (char*)malloc(plen + 3);
+    memcpy(pat, p, plen);
+    /* 末尾补 \ 与 *（已带分隔符则只补 *） */
+    if (plen > 0 && p[plen-1] != '\\' && p[plen-1] != '/') pat[plen++] = '\\';
+    pat[plen++] = '*';
+    pat[plen] = '\0';
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pat, &fd);
+    free(pat);
+    if (h == INVALID_HANDLE_VALUE) return NIL_VAL;
+    do {
+        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
+        if (n == cap) { cap = cap < 16 ? 16 : cap * 2; names = (char**)realloc(names, (size_t)cap * sizeof(char*)); }
+        names[n++] = _strdup(fd.cFileName);
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+#else
+    DIR* d = opendir(p);
+    if (!d) return NIL_VAL;
+    struct dirent* de;
+    while ((de = readdir(d)) != NULL) {
+        if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) continue;
+        if (n == cap) { cap = cap < 16 ? 16 : cap * 2; names = (char**)realloc(names, (size_t)cap * sizeof(char*)); }
+        names[n++] = strdup(de->d_name);
+    }
+    closedir(d);
+#endif
+    Value lst = NIL_VAL;
+    for (int i = n - 1; i >= 0; i--) {
+        ObjString* s = internString(names[i], (int)strlen(names[i]), false);
+        retain(OBJ_VAL(s));
+        ObjList* cell = (ObjList*)allocObj(sizeof(ObjList), OBJ_LIST);
+        cell->car = OBJ_VAL(s);      /* 转移 s 的所有权给 cell */
+        cell->cdr = lst;             /* 后继链：转移所有权，不 retain */
+        lst = OBJ_VAL(cell);
+        free(names[i]);
+    }
+    free(names);
+    return lst;
+}
+
 /* ---------- 高阶函数与列表工具 ---------- */
 /* 遍历集合（列表或向量），对每个元素调用 fn。
  * listSeqNext 返回第 idx 个元素并把它拷出；集合耗尽时返回 false。 */
@@ -518,6 +808,11 @@ static bool collAt(Value coll, int idx, Value* out) {
     return false;
 }
 static int collCount(Value coll) {
+    /* nil 就是空列表（规范 §4.1：nil = 空值/空列表尾），
+       所以 map/filter/reduce 等序列函数应把 nil 当空集合（0 个元素），
+       而不是报「second arg must be a list or vector」。
+       否则 rm-rf 这类脚本组合（对空目录 map）会刷一屏软错误。 */
+    if (coll.type == VAL_NIL) return 0;
     if (isList(coll)) return listLen(coll);
     if (IS_OBJ(coll) && AS_OBJ(coll)->type == OBJ_VECTOR) return ((ObjVector*)AS_OBJ(coll))->count;
     return -1;
@@ -904,6 +1199,20 @@ void registerNatives(Env* g) {
     defNative(g, "key", natKey);
     defNative(g, "random", natRandom);
     defNative(g, "draw", natDraw);
+
+    /* 文件系统原语（壳语言基本功；软错误：失败返回 nil/false/-1） */
+    defNative(g, "exists?", natExists);
+    defNative(g, "is-dir?", natIsDir);
+    defNative(g, "delete", natDelete);
+    defNative(g, "rmdir", natRmdir);
+    defNative(g, "mkdir", natMkdir);
+    defNative(g, "file-size", natFileSize);
+    defNative(g, "read-file", natReadFile);
+    defNative(g, "write-file", natWriteFile);
+    defNative(g, "append-file", natAppendFile);
+    defNative(g, "mv", natMv);
+    defNative(g, "cp", natCp);
+    defNative(g, "ls", natLs);
 
     /* 高阶函数与列表工具 */
     defNative(g, "map", natMap);
