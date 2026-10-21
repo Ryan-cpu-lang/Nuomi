@@ -59,20 +59,26 @@ static NucSegment* find_text_seg(NucFile* f) {
     return NULL;
 }
 static void apply_relocs(NucFile* f, NucSegment* text, uint8_t* base) {
+    /* 宿主实际映射地址与规范里的逻辑 vaddr 未必相等（VirtualAlloc/mmap 给的是随机地址）。
+     * 重定位算的是「字节偏移差」，与绝对地址无关，因此先把符号值换算成段内偏移，
+     * 再把调用点也换算成段内偏移，二者相减即得正确的 rel32。
+     *   （早前实现直接拿规范 vaddr（0x400000+）参与运算，在真实映射地址不同的机器上
+     *     会算出错误的跳��，是 nucutil run 偶发段错误的历史根因。） */
     for (uint32_t i = 0; i < f->rel_count; i++) {
         NucReloc* r = &f->relocs[i];
-        uint64_t sym_vaddr = 0;
+        uint64_t sym_off = 0;                 /* 符号在 TEXT 段内的偏移 */
         if (r->sym_idx < f->symtab_count) {
             NucSymbol* s = &f->symbols[r->sym_idx];
-            sym_vaddr = s->value + f->segments[s->shndx].vaddr;
+            sym_off = s->value + f->segments[s->shndx].vaddr - text->vaddr;
         }
-        uint8_t* p = base + (r->r_offset - text->vaddr);
+        uint64_t site_off = r->r_offset - text->vaddr;   /* 调用点在 TEXT 段内的偏移 */
+        uint8_t* p = base + site_off;
         if (r->r_type == R_X86_64_PC32) {
-            /* §7.2: *((int32_t*)r_offset) = sym_value - r_offset - 4 */
-            *(int32_t*)p = (int32_t)((int64_t)sym_vaddr - (int64_t)r->r_offset - 4);
+            /* §7.2: *((int32_t*)site) = S + A - P - 4（此处 S、P 均为段内偏移） */
+            *(int32_t*)p = (int32_t)((int64_t)sym_off - (int64_t)site_off - 4);
         } else if (r->r_type == R_X86_64_32) {
-            /* §7.2: *((uint32_t*)r_offset) = sym_value（规范声明冻结支持 1、2 两种） */
-            *(uint32_t*)p = (uint32_t)sym_vaddr;
+            /* §7.2: *((uint32_t*)site) = S（加载器可再叠加实际加载基址） */
+            *(uint32_t*)p = (uint32_t)sym_off;
         } else {
             fprintf(stderr, "reloc type %u unsupported by host runner (skipped)\n", r->r_type);
         }

@@ -92,6 +92,18 @@ static void cg_store_rax_local(CGBuf* b, int disp) {
     if (disp >= -128) { cg_u8(b,0x48); cg_u8(b,0x89); cg_u8(b,0x45); cg_u8(b,(uint8_t)disp); }
     else { cg_u8(b,0x48); cg_u8(b,0x89); cg_u8(b,0x85); cg_u32(b,(uint32_t)(int32_t)disp); }
 }
+/* 存 rdx 到局部槽（mov [rbp+disp], rdx）—— 并行 let 弹栈后直接落槽用。
+ *
+ * 编码陷阱（务必留意）：x86-64 的 ModRM.mod 字段含义是
+ *   mod=00 → 无位移（rm=101 时例外，见下）    mod=01 → disp8
+ *   mod=10 → disp32
+ * 「rbp + 负位移」的 1 字节符号扩展形式必须用 mod=01（ModRM = 0x55 表示 reg=rdx），
+ * 曾误写成 mod=10（0x95）却只给 1 字节位移，CPU 会把后续字节当作 disp32 继续读，
+ * 整条指令错位 → 生成的 .nuc 一执行就崩。 */
+static void cg_store_rdx_local(CGBuf* b, int disp) {
+    if (disp >= -128) { cg_u8(b,0x48); cg_u8(b,0x89); cg_u8(b,0x55); cg_u8(b,(uint8_t)disp); }  /* mod=01 */
+    else              { cg_u8(b,0x48); cg_u8(b,0x89); cg_u8(b,0x95); cg_u32(b,(uint32_t)(int32_t)disp); } /* mod=10 */
+}
 
 /* ====================== 符号辅助 ====================== */
 static char* cg_strdup(const char* s) { size_t l = strlen(s)+1; char* p = (char*)malloc(l); memcpy(p,s,l); return p; }
@@ -143,6 +155,7 @@ typedef struct {
     /* 变量作用域（每函数重建） */
     Local* vars; int nvar, varcap;
     int nslots;        /* 已用局部槽（负偏移计数） */
+    int* scopes; int nsc, sccap;   /* 局部作用域栈（let 进出） */
     /* 重定位收集（最终 .text 偏移） */
     CGRel* rels; int nrel, relcap;
     size_t text_base;  /* 本次发射内容将拼接进 .text 的起始偏移 */
@@ -172,7 +185,19 @@ static int lab_resolve(CG* c) {
     c->nlab = 0; c->nfix = 0;
     return 0;
 }
-static void scope_reset(CG* c) { c->nvar = 0; c->nslots = 0; }
+static void scope_reset(CG* c) { c->nvar = 0; c->nslots = 0; c->nsc = 0; }
+/* 局部作用域栈：记录进入块作用域时的 nvar 快照，出作用域时回滚。
+   没有它，let 内部定义的变量会泄漏到外层（名字可见性错误）。 */
+static void scope_push(CG* c) {
+    if (c->nsc == c->sccap) {
+        c->sccap = c->sccap < 8 ? 8 : c->sccap * 2;
+        c->scopes = (int*)realloc(c->scopes, c->sccap * sizeof(int));
+    }
+    c->scopes[c->nsc++] = c->nvar;
+}
+static void scope_pop(CG* c) {
+    if (c->nsc > 0) c->nvar = c->scopes[--c->nsc];
+}
 static bool var_find(CG* c, const char* name, int* disp) {
     for (int i=0;i<c->nvar;i++) if (strcmp(c->vars[i].name,name)==0){ *disp=c->vars[i].disp; return true; }
     return false;
@@ -273,6 +298,89 @@ static bool cg_expr(CG* c, Value node) {
         cg_setcc_al(c->out, cc);
         cg_movzx_eax_al(c->out);
         return true;
+    }
+    /* ---- let / let* / letrec ---- */
+    if (strcmp(op,"let")==0 || strcmp(op,"let*")==0 || strcmp(op,"letrec")==0) {
+        if (!isList(args)) { snprintf(c->err,c->errlen,"%s: bad bindings", op); return false; }
+        Value bindings = listCar(args);
+        Value body = listCdr(args);
+        bool isRec = (op[3]=='r');   /* letrec */
+        bool isSeq = (op[3]=='*');   /* let*  */
+
+        scope_push(c);
+        /* letrec：先把所有名字占位（赋 0），让 init 能自/互引用 */
+        if (isRec) {
+            for (Value b = bindings; isList(b); b = listCdr(b)) {
+                Value pair = listCar(b);
+                if (!isList(pair)) { snprintf(c->err,c->errlen,"letrec: bad binding"); goto letfail; }
+                Value nv = listCar(pair);
+                if (!cg_isSymbol(nv)) { snprintf(c->err,c->errlen,"letrec: binding name is not a symbol"); goto letfail; }
+                var_alloc(c, cg_symChars(nv));
+                if (c->err[0]) goto letfail;
+            }
+        }
+        /* let / letrec：所有 init 先在外层求值再绑定（并行语义）
+           —— 但编译器里都在同一帧内，顺序发射即可满足「init 看不到本次新绑定」。
+              为严格保证并行语义，let 的 init 必须在此刻绑定前求值；
+              由于 var_find 只查已注册名字，且我们「先求值全部再 var_alloc」，
+              并行/顺序在编译期即可区分。 */
+        if (!isSeq && !isRec) {
+            /* 并行 let：先发射全部 init（压栈暂存），再 var_alloc + store */
+            int nb = 0;
+            for (Value b = bindings; isList(b); b = listCdr(b)) nb++;
+            int* disps = (int*)malloc((nb>0?nb:1) * sizeof(int));
+            ObjString** names = (ObjString**)malloc((nb>0?nb:1) * sizeof(ObjString*));
+            int i = 0;
+            for (Value b = bindings; isList(b); b = listCdr(b), i++) {
+                Value pair = listCar(b);
+                if (!isList(pair) || !isList(listCdr(pair))) { free(disps); free(names); snprintf(c->err,c->errlen,"let: bad binding"); goto letfail; }
+                Value nv = listCar(pair);
+                if (!cg_isSymbol(nv)) { free(disps); free(names); snprintf(c->err,c->errlen,"let: binding name is not a symbol"); goto letfail; }
+                names[i] = (ObjString*)AS_OBJ(nv);
+                if (!cg_expr(c, listCar(listCdr(pair)))) { free(disps); free(names); goto letfail; }
+                cg_push_rax(c->out);   /* 暂存 init 值 */
+                disps[i] = 0;
+            }
+            i = 0;
+            for (Value b = bindings; isList(b); b = listCdr(b), i++) {
+                disps[i] = var_alloc(c, names[i]->chars);
+                if (c->err[0]) { free(disps); free(names); goto letfail; }
+            }
+            /* 从栈顶依次弹出写入各自槽位 */
+            for (int k = nb - 1; k >= 0; k--) {
+                cg_pop_rdx(c->out);
+                cg_store_rdx_local(c->out, disps[k]);
+            }
+            free(disps); free(names);
+        } else {
+            /* let* / letrec：顺序绑定，每个 init 立即可用前面的名字 */
+            for (Value b = bindings; isList(b); b = listCdr(b)) {
+                Value pair = listCar(b);
+                if (!isList(pair) || !isList(listCdr(pair))) { snprintf(c->err,c->errlen,"%s: bad binding", op); goto letfail; }
+                Value nv = listCar(pair);
+                if (!cg_isSymbol(nv)) { snprintf(c->err,c->errlen,"%s: binding name is not a symbol", op); goto letfail; }
+                int disp = var_alloc(c, cg_symChars(nv));
+                if (c->err[0]) goto letfail;
+                if (!cg_expr(c, listCar(listCdr(pair)))) goto letfail;
+                cg_store_rax_local(c->out, disp);
+            }
+        }
+        /* body：顺序求值，返回最后一个 */
+        if (isList(body)) {
+            bool any = false;
+            for (Value p = body; isList(p); p = listCdr(p)) {
+                if (!cg_expr(c, listCar(p))) goto letfail;
+                any = true;
+            }
+            if (!any) cg_xor_eax(c->out);
+        } else {
+            cg_xor_eax(c->out);
+        }
+        scope_pop(c);
+        return true;
+    letfail:
+        scope_pop(c);
+        return false;
     }
     /* ---- if ---- */
     if (strcmp(op,"if")==0) {
@@ -524,7 +632,7 @@ int nuomi_compile_to_nuc(const char* src, uint8_t** out, size_t* out_size, char*
     free(c.ct.c);
     for (int i = 0; i < c.ft.n; i++) free(c.ft.f[i].name);
     free(c.ft.f);
-    free(c.vars); free(c.labs); free(c.fixs); free(c.rels);
+    free(c.vars); free(c.labs); free(c.fixs); free(c.rels); free(c.scopes);
     return 0;
 
 fail:
@@ -533,6 +641,6 @@ fail:
     free(c.ct.c);
     for (int i = 0; i < c.ft.n; i++) free(c.ft.f[i].name);
     free(c.ft.f);
-    free(c.vars); free(c.labs); free(c.fixs); free(c.rels);
+    free(c.vars); free(c.labs); free(c.fixs); free(c.rels); free(c.scopes);
     return -1;
 }
