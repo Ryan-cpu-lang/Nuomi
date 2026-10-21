@@ -315,6 +315,142 @@ static Value natInputInt(int c, Value* a, Env* e) {
     return NUM_VAL(v);
 }
 
+/* ============================================================
+ * ---------- 终端 / 游戏原语 ----------
+ * 贪吃蛇这类实时游戏需要四样东西：清屏、延时、不阻塞的键盘、随机数。
+ * 糯米原先只有行式输入（input），所以补上这一组。
+ * Windows 走 Win32 控制台 API + conio；其他平台用 ANSI 序列兜底。
+ * ============================================================ */
+#if defined(_WIN32)
+#include <windows.h>
+#include <conio.h>
+#include <time.h>
+
+static HANDLE g_conOut = NULL;
+static void conEnsure(void) {
+    if (!g_conOut) g_conOut = GetStdHandle(STD_OUTPUT_HANDLE);
+}
+
+/* cls：清屏 + 光标归位 + 隐藏光标（隐藏是为防游戏画面闪烁） */
+static Value natCls(int c, Value* a, Env* e) {
+    (void)c; (void)a; (void)e;
+    conEnsure();
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    if (GetConsoleScreenBufferInfo(g_conOut, &csbi)) {
+        DWORD cells = (DWORD)csbi.dwSize.X * (DWORD)csbi.dwSize.Y;
+        COORD home = { 0, 0 };
+        DWORD written;
+        FillConsoleOutputCharacterA(g_conOut, ' ', cells, home, &written);
+        FillConsoleOutputAttribute(g_conOut, csbi.wAttributes, cells, home, &written);
+        SetConsoleCursorPosition(g_conOut, home);
+    }
+    CONSOLE_CURSOR_INFO ci;
+    if (GetConsoleCursorInfo(g_conOut, &ci)) { ci.bVisible = FALSE; SetConsoleCursorInfo(g_conOut, &ci); }
+    return NIL_VAL;
+}
+
+/* show-cursor：恢复光标（游戏退出时必须调，不然光标一直藏着） */
+static Value natShowCursor(int c, Value* a, Env* e) {
+    (void)c; (void)a; (void)e;
+    conEnsure();
+    CONSOLE_CURSOR_INFO ci;
+    if (GetConsoleCursorInfo(g_conOut, &ci)) { ci.bVisible = TRUE; SetConsoleCursorInfo(g_conOut, &ci); }
+    return NIL_VAL;
+}
+
+/* sleep 毫秒：游戏帧延时 */
+static Value natSleep(int c, Value* a, Env* e) {
+    (void)e;
+    if (c < 1 || !IS_NUM(a[0])) { runtimeError("sleep expects milliseconds"); return NIL_VAL; }
+    if (AS_NUM(a[0]) < 0) return NIL_VAL;
+    Sleep((DWORD)AS_NUM(a[0]));
+    return NIL_VAL;
+}
+
+/* key：非阻塞读键盘。无按键 → nil。
+ * 方向键 → 符号 'up / 'down / 'left / 'right；Esc → 'esc；
+ * 普通键 → 该字符的字符串（如 "w"）。方向键在 Windows 控制台是
+ * 0xE0/0x00 前缀 + 扫描码两段式，这里合成成符号返回。 */
+static Value natKey(int c, Value* a, Env* e) {
+    (void)c; (void)a; (void)e;
+    if (!_kbhit()) return NIL_VAL;
+    int ch = _getch();
+    if (ch == 0 || ch == 0xE0) {
+        int code = _getch();
+        const char* nm = NULL;
+        switch (code) {
+            case 72: nm = "up";    break;
+            case 80: nm = "down";  break;
+            case 75: nm = "left";  break;
+            case 77: nm = "right"; break;
+            default: return NIL_VAL;
+        }
+        ObjString* s = internString(nm, (int)strlen(nm), true);
+        retain(OBJ_VAL(s));
+        return OBJ_VAL(s);
+    }
+    if (ch == 27) {
+        ObjString* s = internString("esc", 3, true);
+        retain(OBJ_VAL(s));
+        return OBJ_VAL(s);
+    }
+    if (ch == '\r' || ch == '\n') ch = ' ';
+    char buf[2] = { (char)ch, '\0' };
+    ObjString* s = internString(buf, 1, false);
+    retain(OBJ_VAL(s));
+    return OBJ_VAL(s);
+}
+
+/* random n：[0, n) 均匀随机整数。LCG + 时间种子，n<=0 时返回 0。 */
+static unsigned long long g_rng = 0;
+static Value natRandom(int c, Value* a, Env* e) {
+    (void)e;
+    if (c < 1 || !IS_NUM(a[0])) { runtimeError("random expects a positive integer"); return NIL_VAL; }
+    if (!g_rng) {
+        g_rng = (unsigned long long)time(NULL);
+        g_rng ^= (unsigned long long)(size_t)&g_rng;   /* 地址扰动，避免同秒同种子 */
+        if (!g_rng) g_rng = 0x9E3779B97F4A7C15ull;
+    }
+    g_rng = g_rng * 6364136223846793005ull + 1442695040888963407ull;
+    double n = AS_NUM(a[0]);
+    if (n <= 0) return NUM_VAL(0);
+    return NUM_VAL((double)((g_rng >> 33) % (unsigned long long)n));
+}
+#else  /* ---- 非 Windows：ANSI 清屏 + nanosleep；无键盘支持（key 恒返回 nil） ---- */
+#include <time.h>
+static Value natCls(int c, Value* a, Env* e) {
+    (void)c; (void)a; (void)e;
+    fputs("\x1B[2J\x1B[H\x1B[?25l", stdout);
+    fflush(stdout);
+    return NIL_VAL;
+}
+static Value natShowCursor(int c, Value* a, Env* e) {
+    (void)c; (void)a; (void)e;
+    fputs("\x1B[?25h", stdout);
+    fflush(stdout);
+    return NIL_VAL;
+}
+static Value natSleep(int c, Value* a, Env* e) {
+    (void)e;
+    if (c < 1 || !IS_NUM(a[0])) { runtimeError("sleep expects milliseconds"); return NIL_VAL; }
+    struct timespec ts;
+    ts.tv_sec = (time_t)(AS_NUM(a[0]) / 1000);
+    ts.tv_nsec = (long)((AS_NUM(a[0]) - ts.tv_sec * 1000) * 1000000);
+    nanosleep(&ts, NULL);
+    return NIL_VAL;
+}
+static Value natKey(int c, Value* a, Env* e) {
+    (void)c; (void)a; (void)e;
+    return NIL_VAL;   /* 非 Windows 平台暂无非阻塞键盘 */
+}
+static Value natRandom(int c, Value* a, Env* e) {
+    (void)e;
+    if (c < 1 || !IS_NUM(a[0])) { runtimeError("random expects a positive integer"); return NIL_VAL; }
+    if (AS_NUM(a[0]) <= 0) return NUM_VAL(0);
+    return NUM_VAL((double)(rand() % (int)AS_NUM(a[0])));
+}
+#endif
+
 /* ---------- 高阶函数与列表工具 ---------- */
 /* 遍历集合（列表或向量），对每个元素调用 fn。
  * listSeqNext 返回第 idx 个元素并把它拷出；集合耗尽时返回 false。 */
@@ -713,6 +849,13 @@ void registerNatives(Env* g) {
     defNative(g, "str", natStr);
     defNative(g, "input", natInput);
     defNative(g, "input-int", natInputInt);
+
+    /* 终端 / 游戏原语（cls / show-cursor / sleep / key / random） */
+    defNative(g, "cls", natCls);
+    defNative(g, "show-cursor", natShowCursor);
+    defNative(g, "sleep", natSleep);
+    defNative(g, "key", natKey);
+    defNative(g, "random", natRandom);
 
     /* 高阶函数与列表工具 */
     defNative(g, "map", natMap);

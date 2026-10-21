@@ -139,10 +139,19 @@ nuomi> (sq 9)
 | `(cons car cdr)` `(car l)` `(cdr l)` `(nth l i)` `(get v i)` `(set v i x)` `(length x)` | 容器操作 |
 | `(str a b c)` | 拼接成字符串 |
 | `(print ...) (println ...)` | 输出 |
+| `(input [提示])` `(input-int [提示])` | 行式输入（读到回车为止） |
+| `(cls)` `(show-cursor)` | 清屏+归位+隐光标 / 恢复光标 |
+| `(sleep 毫秒)` | 延时 |
+| `(key)` | **非阻塞**键盘：无按键返回 `nil`；方向键返回 `'up` `'down` `'left` `'right`；Esc 返回 `'esc`；普通键返回单字符字符串 |
+| `(random n)` | `[0, n)` 随机整数（LCG + 时间种子） |
 
 值类型：数字（double）、布尔 `true`/`false`、空 `nil`、字符串、符号、链表、向量、函数/闭包。
 
 `nil` 与 `false` 视为假，其余为真（含数字 0 与空字符串）。
+
+> ⚠️ **链表 vs 向量是两套操作**：`car`/`cdr`/`cons`/`null?` 只作用于链表；`get`/`set` 只作用于向量。`(car [1 2])` 不报错、静默返回 `nil`，别混用。
+>
+> 🎮 `cls`/`sleep`/`key`/`random` 是 2026-10-21 为实时游戏加的原语（Windows 走 Win32 控制台 + conio，其他平台 ANSI 兜底、无键盘）。贪吃蛇示例见 `samples/snake.nuomi`。
 
 > **递归深度**：约 3700+ 层函数递归安全可用（早期版本约 500 层即栈溢出）；超出会输出可读报错 `maximum recursion depth exceeded` 并终止，不会崩溃。
 
