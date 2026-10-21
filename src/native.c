@@ -315,6 +315,366 @@ static Value natInputInt(int c, Value* a, Env* e) {
     return NUM_VAL(v);
 }
 
+/* ---------- 高阶函数与列表工具 ---------- */
+/* 遍历集合（列表或向量），对每个元素调用 fn。
+ * listSeqNext 返回第 idx 个元素并把它拷出；集合耗尽时返回 false。 */
+static bool collAt(Value coll, int idx, Value* out) {
+    if (isList(coll)) {
+        Value cur = listRef(coll, idx);
+        if (!isList(cur)) return false;
+        *out = listCar(cur);
+        retain(*out);
+        return true;
+    }
+    if (IS_OBJ(coll) && AS_OBJ(coll)->type == OBJ_VECTOR) {
+        ObjVector* v = (ObjVector*)AS_OBJ(coll);
+        if (idx < 0 || idx >= v->count) return false;
+        *out = v->items[idx];
+        retain(*out);
+        return true;
+    }
+    return false;
+}
+static int collCount(Value coll) {
+    if (isList(coll)) return listLen(coll);
+    if (IS_OBJ(coll) && AS_OBJ(coll)->type == OBJ_VECTOR) return ((ObjVector*)AS_OBJ(coll))->count;
+    return -1;
+}
+/* 在链表头压入一个元素，返回新的头。
+ * 所有权约定：新 cell 自身持有一份（refcount=1，由返回值转交给调用方）；
+ * 对 item 和 head 各 retain 一次，使它们同时被新 cell 与调用方各自持有。
+ * 调用方随后应release 自己那份 item/head。
+ */
+static Value prependCell(Value head, Value item) {
+    ObjList* cell = (ObjList*)allocObj(sizeof(ObjList), OBJ_LIST);
+    cell->car = item; retain(item);
+    cell->cdr = head; retain(head);      /* 新 cell 也要持有后继，缺这行会 use-after-free */
+    return OBJ_VAL(cell);
+}
+
+/* (map fn coll) —— 逐元素映射，返回同形状的新列表 */
+static Value natMap(int c, Value* a, Env* e) {
+    if (c != 2) { runtimeError("map expects (fn coll)"); return NIL_VAL; }
+    int n = collCount(a[1]);
+    if (n < 0) { runtimeError("map: second arg must be a list or vector"); return NIL_VAL; }
+    Value out = NIL_VAL;
+    for (int i = n - 1; i >= 0; i--) {
+        Value item;
+        if (!collAt(a[1], i, &item)) continue;
+        Value arg = item;
+        Value r = apply(a[0], &arg, 1, e);
+        release(arg);
+        Value nh = prependCell(out, r);
+        release(out);
+        out = nh;
+        release(r);
+    }
+    return out;
+}
+
+/* (filter pred coll) —— 保留 pred 为真的元素 */
+static Value natFilter(int c, Value* a, Env* e) {
+    if (c != 2) { runtimeError("filter expects (pred coll)"); return NIL_VAL; }
+    int n = collCount(a[1]);
+    if (n < 0) { runtimeError("filter: second arg must be a list or vector"); return NIL_VAL; }
+    /* 先正序收集命中的元素，再逆序建链 */
+    Value* keep = (Value*)malloc((n > 0 ? n : 1) * sizeof(Value));
+    int nk = 0;
+    for (int i = 0; i < n; i++) {
+        Value item;
+        if (!collAt(a[1], i, &item)) continue;
+        Value arg = item;
+        Value p = apply(a[0], &arg, 1, e);
+        release(arg);
+        bool yes = !isFalsey(p);
+        release(p);
+        if (yes) keep[nk++] = item;   /* item 已被 collAt retain */
+        release(item);
+    }
+    Value out = NIL_VAL;
+    for (int i = nk - 1; i >= 0; i--) {
+        Value nh = prependCell(out, keep[i]);
+        release(out);
+        out = nh;
+        release(keep[i]);
+    }
+    free(keep);
+    return out;
+}
+
+/* (reduce fn coll) / (reduce fn init coll) / (reduce fn coll init)
+ * 三参时按「哪个参数是集合」来区分 (fn init coll) 与 (fn coll init)。 */
+static Value natReduce(int c, Value* a, Env* e) {
+    if (c < 2) { runtimeError("reduce expects (fn coll) or (fn init coll)"); return NIL_VAL; }
+    if (c > 3) { runtimeError("reduce: too many args"); return NIL_VAL; }
+    Value fn = a[0];
+    int n;
+    Value coll, acc;
+    bool haveAcc = false;
+
+    if (c == 2) {
+        coll = a[1];
+    } else {
+        int n1 = collCount(a[1]);
+        int n2 = collCount(a[2]);
+        /* 恰有一个是集合时，按位置决定：第二个是集合 → (fn coll init)；
+         * 否则默认 (fn init coll)。 */
+        bool a1isColl = (n1 >= 0);
+        bool a2isColl = (n2 >= 0);
+        if (a1isColl && !a2isColl)      { coll = a[1]; acc = a[2]; haveAcc = true; }
+        else if (!a1isColl && a2isColl) { coll = a[2]; acc = a[1]; haveAcc = true; }
+        else {
+            runtimeError("reduce: one of the two args must be a list or vector");
+            return NIL_VAL;
+        }
+    }
+    n = collCount(coll);
+    if (n < 0) { runtimeError("reduce: not a list or vector"); return NIL_VAL; }
+
+    Value cur = acc; retain(cur);
+    int start = 0;
+    if (!haveAcc) {
+        if (n == 0) { release(cur); return NIL_VAL; }
+        Value first;
+        if (!collAt(coll, 0, &first)) { release(cur); return NIL_VAL; }
+        release(cur);
+        cur = first;              /* first 已 retain，作为新初值 */
+        start = 1;
+    }
+    for (int i = start; i < n; i++) {
+        Value item;
+        if (!collAt(coll, i, &item)) break;
+        Value args[2];
+        args[0] = cur; args[1] = item;
+        Value r = apply(fn, args, 2, e);
+        release(cur);
+        release(item);
+        cur = r;                  /* 转移所有权 */
+    }
+    return cur;
+}
+
+/* (range start [end [step]]) —— 返回数字列表
+ * (range 5)      => (0 1 2 3 4)
+ * (range 2 5)    => (2 3 4)
+ * (range 0 10 2) => (0 2 4 6 8) */
+static Value natRange(int c, Value* a, Env* e) {
+    (void)e;
+    double start = 0, end = 0, step = 1;
+    if (c == 1) { if (!IS_NUM(a[0])) { runtimeError("range expects numbers"); return NIL_VAL; } end = AS_NUM(a[0]); }
+    else if (c == 2) {
+        if (!IS_NUM(a[0]) || !IS_NUM(a[1])) { runtimeError("range expects numbers"); return NIL_VAL; }
+        start = AS_NUM(a[0]); end = AS_NUM(a[1]);
+    } else if (c == 3) {
+        if (!IS_NUM(a[0]) || !IS_NUM(a[1]) || !IS_NUM(a[2])) { runtimeError("range expects numbers"); return NIL_VAL; }
+        start = AS_NUM(a[0]); end = AS_NUM(a[1]); step = AS_NUM(a[2]);
+    } else { runtimeError("range expects 1-3 args"); return NIL_VAL; }
+    if (step == 0) { runtimeError("range: step must not be zero"); return NIL_VAL; }
+    /* 先正向算出元素个数，再逆序建链 */
+    int n = 0;
+    if (step > 0) { for (double v = start; v < end; v += step) n++; }
+    else          { for (double v = start; v > end; v += step) n++; }
+    if (n > 10000000) { runtimeError("range: too many elements"); return NIL_VAL; }
+    Value out = NIL_VAL;
+    for (int i = n - 1; i >= 0; i--) {
+        Value num = NUM_VAL(start + step * (double)i);
+        Value nh = prependCell(out, num);
+        release(out);
+        out = nh;
+        release(num);
+    }
+    return out;
+}
+
+/* (null? x) —— 列表/向量是否为空 */
+static Value natNull(int c, Value* a, Env* e) {
+    (void)e;
+    if (c != 1) { runtimeError("null? expects 1 arg"); return NIL_VAL; }
+    return BOOL_VAL(IS_NIL(a[0]) || collCount(a[0]) == 0);
+}
+
+/* (assoc lst key val) —— 在关联列表中替换/新增
+ * 关联表元素形如 (key value)。 */
+static Value natAssoc(int c, Value* a, Env* e) {
+    if (c != 2 && c != 3) { runtimeError("assoc expects (lst key val)"); return NIL_VAL; }
+    if (c == 2) {
+        /* 两参形式assoc(lst key)：只查不建，返回找到的那条pair 或 nil */
+        for (Value cur = a[0]; isList(cur); cur = listCdr(cur)) {
+            Value pair = listCar(cur);
+            if (!isList(pair)) continue;              /* 跳过非法条目，不解引用 */
+            Value k = listCar(pair);
+            if (valueEqual(k, a[1])) { retain(pair); return pair; }
+        }
+        return NIL_VAL;
+    }
+    Value head = NIL_VAL;
+    bool replaced = false;
+    for (Value cur = a[0]; isList(cur); cur = listCdr(cur)) {
+        Value pair = listCar(cur);
+        if (!isList(pair)) continue;                  /* 非法条目直接跳过 */
+        Value k = listCar(pair);
+        bool same = valueEqual(k, a[1]);
+        if (same && !replaced) {
+            Value kv[2]; kv[0] = k; kv[1] = a[2];
+            Value np = natList(2, kv, e);
+            Value nh = prependCell(head, np);
+            release(head);
+            head = nh;
+            release(np);
+            replaced = true;
+        } else {
+            retain(pair);
+            Value nh = prependCell(head, pair);
+            release(head);
+            head = nh;
+            release(pair);
+        }
+    }
+    if (!replaced) {
+        Value kv[2]; kv[0] = a[1]; kv[1] = a[2];
+        Value np = natList(2, kv, e);
+        Value nh = prependCell(head, np);
+        release(head);
+        head = nh;
+        release(np);
+    }
+    return head;
+}
+
+/* (member? x coll) —— x 是否在 coll 中（结构相等） */
+static Value natMember(int c, Value* a, Env* e) {
+    (void)e;
+    if (c != 2) { runtimeError("member? expects (x coll)"); return NIL_VAL; }
+    int n = collCount(a[1]);
+    if (n < 0) return BOOL_VAL(false);
+    for (int i = 0; i < n; i++) {
+        Value item;
+        if (!collAt(a[1], i, &item)) break;
+        bool eq = valueEqual(a[0], item);
+        release(item);
+        if (eq) return BOOL_VAL(true);
+    }
+    return BOOL_VAL(false);
+}
+
+/* (number? x) / (string? x) / (list? x) / (vector? x) / (function? x) / (bool? x) */
+static Value natNumberP(int c, Value* a, Env* e) { (void)e; (void)c; return BOOL_VAL(IS_NUM(a[0])); }
+static Value natStringP(int c, Value* a, Env* e) {
+    (void)e; (void)c;
+    return BOOL_VAL(IS_OBJ(a[0]) && AS_OBJ(a[0])->type == OBJ_STRING && !((ObjString*)AS_OBJ(a[0]))->isSymbol);
+}
+static Value natListP(int c, Value* a, Env* e) { (void)e; (void)c; return BOOL_VAL(isList(a[0]) || IS_NIL(a[0])); }
+static Value natVectorP(int c, Value* a, Env* e) {
+    (void)e; (void)c;
+    return BOOL_VAL(IS_OBJ(a[0]) && AS_OBJ(a[0])->type == OBJ_VECTOR);
+}
+static Value natFunctionP(int c, Value* a, Env* e) {
+    (void)e; (void)c;
+    if (!IS_OBJ(a[0])) return BOOL_VAL(false);
+    ObjType t = AS_OBJ(a[0])->type;
+    return BOOL_VAL(t == OBJ_FUNCTION || t == OBJ_NATIVE);
+}
+static Value natBoolP(int c, Value* a, Env* e) { (void)e; (void)c; return BOOL_VAL(IS_BOOL(a[0])); }
+
+/* (abs x) / (floor x) / (ceil x) / (round x) / (sqrt x) / (min ...) / (max ...)
+ * (pow a b) / (mod-floor a b) —— 补齐常用数学函数 */
+static Value natAbs(int c, Value* a, Env* e) {
+    (void)e;
+    if (c != 1 || !IS_NUM(a[0])) { runtimeError("abs expects a number"); return NIL_VAL; }
+    return NUM_VAL(fabs(AS_NUM(a[0])));
+}
+static Value natFloor(int c, Value* a, Env* e) {
+    (void)e;
+    if (c != 1 || !IS_NUM(a[0])) { runtimeError("floor expects a number"); return NIL_VAL; }
+    return NUM_VAL(floor(AS_NUM(a[0])));
+}
+static Value natCeil(int c, Value* a, Env* e) {
+    (void)e;
+    if (c != 1 || !IS_NUM(a[0])) { runtimeError("ceil expects a number"); return NIL_VAL; }
+    return NUM_VAL(ceil(AS_NUM(a[0])));
+}
+static Value natRound(int c, Value* a, Env* e) {
+    (void)e;
+    if (c != 1 || !IS_NUM(a[0])) { runtimeError("round expects a number"); return NIL_VAL; }
+    return NUM_VAL(round(AS_NUM(a[0])));
+}
+static Value natSqrt(int c, Value* a, Env* e) {
+    (void)e;
+    if (c != 1 || !IS_NUM(a[0])) { runtimeError("sqrt expects a number"); return NIL_VAL; }
+    if (AS_NUM(a[0]) < 0) { runtimeError("sqrt: negative argument"); return NIL_VAL; }
+    return NUM_VAL(sqrt(AS_NUM(a[0])));
+}
+static Value natPow(int c, Value* a, Env* e) {
+    (void)e;
+    if (c != 2 || !IS_NUM(a[0]) || !IS_NUM(a[1])) { runtimeError("pow expects two numbers"); return NIL_VAL; }
+    return NUM_VAL(pow(AS_NUM(a[0]), AS_NUM(a[1])));
+}
+static Value natMin(int c, Value* a, Env* e) {
+    (void)e;
+    if (c < 1) { runtimeError("min expects at least 1 arg"); return NIL_VAL; }
+    double m = AS_NUM(a[0]);
+    for (int i = 1; i < c; i++) { if (!IS_NUM(a[i])) { runtimeError("min expects numbers"); return NIL_VAL; } if (AS_NUM(a[i]) < m) m = AS_NUM(a[i]); }
+    return NUM_VAL(m);
+}
+static Value natMax(int c, Value* a, Env* e) {
+    (void)e;
+    if (c < 1) { runtimeError("max expects at least 1 arg"); return NIL_VAL; }
+    double m = AS_NUM(a[0]);
+    for (int i = 1; i < c; i++) { if (!IS_NUM(a[i])) { runtimeError("max expects numbers"); return NIL_VAL; } if (AS_NUM(a[i]) > m) m = AS_NUM(a[i]); }
+    return NUM_VAL(m);
+}
+
+/* (last coll) / (butlast coll) / (append a b) / (reverse coll) */
+static Value natLast(int c, Value* a, Env* e) {
+    (void)e;
+    if (c != 1) { runtimeError("last expects 1 arg"); return NIL_VAL; }
+    int n = collCount(a[0]);
+    if (n <= 0) { runtimeError("last expects a non-empty list"); return NIL_VAL; }
+    Value item;
+    if (!collAt(a[0], n - 1, &item)) {
+        runtimeError("last: bad list");
+        return NIL_VAL;
+    }
+    return item;      /* collAt 已 retain，转移所有权给调用方 */
+}
+static Value natReverse(int c, Value* a, Env* e) {
+    (void)e;
+    int n = collCount(a[0]);
+    if (n < 0) { runtimeError("reverse expects a list or vector"); return NIL_VAL; }
+    Value out = NIL_VAL;
+    for (int i = n - 1; i >= 0; i--) {
+        Value item;
+        if (!collAt(a[0], i, &item)) continue;
+        Value nh = prependCell(out, item);
+        release(out);
+        out = nh;
+        release(item);
+    }
+    return out;
+}
+static Value natAppend(int c, Value* a, Env* e) {
+    (void)e;
+    if (c != 2) { runtimeError("append expects (a b)"); return NIL_VAL; }
+    int na = collCount(a[0]), nb = collCount(a[1]);
+    if (na < 0 || nb < 0) { runtimeError("append expects lists or vectors"); return NIL_VAL; }
+    Value out = NIL_VAL;
+    for (int i = nb - 1; i >= 0; i--) {
+        Value item;
+        if (collAt(a[1], i, &item)) {
+            Value nh = prependCell(out, item);
+            release(out); out = nh; release(item);
+        }
+    }
+    for (int i = na - 1; i >= 0; i--) {
+        Value item;
+        if (collAt(a[0], i, &item)) {
+            Value nh = prependCell(out, item);
+            release(out); out = nh; release(item);
+        }
+    }
+    return out;
+}
+
 /* ---------- 注册 ---------- */
 static void defNative(Env* g, const char* name, NativeFn fn) {
     ObjNative* nat = (ObjNative*)allocObj(sizeof(ObjNative), OBJ_NATIVE);
@@ -353,4 +713,36 @@ void registerNatives(Env* g) {
     defNative(g, "str", natStr);
     defNative(g, "input", natInput);
     defNative(g, "input-int", natInputInt);
+
+    /* 高阶函数与列表工具 */
+    defNative(g, "map", natMap);
+    defNative(g, "filter", natFilter);
+    defNative(g, "reduce", natReduce);
+    defNative(g, "range", natRange);
+    defNative(g, "null?", natNull);
+    defNative(g, "assoc", natAssoc);
+    defNative(g, "member?", natMember);
+
+    /* 类型判断 */
+    defNative(g, "number?", natNumberP);
+    defNative(g, "string?", natStringP);
+    defNative(g, "list?", natListP);
+    defNative(g, "vector?", natVectorP);
+    defNative(g, "function?", natFunctionP);
+    defNative(g, "bool?", natBoolP);
+
+    /* 数学函数 */
+    defNative(g, "abs", natAbs);
+    defNative(g, "floor", natFloor);
+    defNative(g, "ceil", natCeil);
+    defNative(g, "round", natRound);
+    defNative(g, "sqrt", natSqrt);
+    defNative(g, "pow", natPow);
+    defNative(g, "min", natMin);
+    defNative(g, "max", natMax);
+
+    /* 序列工具 */
+    defNative(g, "last", natLast);
+    defNative(g, "reverse", natReverse);
+    defNative(g, "append", natAppend);
 }

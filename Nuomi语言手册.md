@@ -116,6 +116,47 @@ Nuomi 的源码就是一堆 **S-表达式（S-expression）**，整体长得像 
 (or false nil 42)              ; => 42（遇到第一个真值即返回）
 ```
 
+### `let` — 局部作用域（★ 最重要）
+```nuomi
+(let ((x 1) (y 2))
+  (println (+ x y)))           ; => 3，不污染全局
+
+;; 带初值的并行绑定：所有 init 先在外层求值
+(define ox 10)
+(let ((a 1) (b ox)) (list a b))  ; => (1 10)
+```
+
+### `let*` — 顺序绑定
+```nuomi
+(let* ((a 1)
+       (b (+ a 10))             ; ← 这里已经能看到 a
+       (c (* b 2)))
+  (+ a b c))                   ; => 34
+```
+
+### `letrec` — 局部递归 / 互递归
+```nuomi
+(letrec ((even? (lambda (n) (if (= n 0) true  (odd?  (- n 1)))))
+         (odd?  (lambda (n) (if (= n 0) false (even? (- n 1))))))
+  (even? 10))                  ; => true
+
+;; 局部递归：素数试除
+(letrec ((check (lambda (d) (if (> (* d d) n) true
+                                 (if (= (% n d) 0) false (check (+ d 1)))))))
+  (check 2))
+```
+
+### 带状态的闭包 — `let` + `set!`
+```nuomi
+(define (make-counter)
+  (let ((n 0))                 ; ← n 被闭包捕获，成为私有状态
+    (lambda ()
+      (set! n (+ n 1))
+      n)))
+(define c1 (make-counter))
+(list (c1) (c1) (c1))          ; => (1 2 3)，每次调用独立
+```
+
 ---
 
 ## 5. 内置函数（Built-in Functions）
@@ -130,6 +171,11 @@ Nuomi 的源码就是一堆 **S-表达式（S-expression）**，整体长得像 
 | `(* a b …)` | 求积 | `(* 2 3 4)` => `24` |
 | `(/ a b …)` | 相除；**只有一个参数时等于 `1/x`** | `(/ 12 3)` => `4`；`(/ 2)` => `0.5` |
 | `(% a b)` | 取模（要求恰好 2 个数，fmod） | `(% 10 3)` => `1` |
+| `(abs x)` | 绝对值 | `(abs -7)` => `7` |
+| `(floor x)` / `(ceil x)` / `(round x)` | 下取整 / 上取整 / 四舍五入 | `(floor 3.9)` => `3` |
+| `(sqrt x)` | 平方根（负数报错） | `(sqrt 144)` => `12` |
+| `(pow a b)` | 幂 | `(pow 3 4)` => `81` |
+| `(min a …)` / `(max a …)` | 最小 / 最大 | `(min 5 2 8)` => `2` |
 
 ### 5.2 比较（链式，全部成立才为真）
 | 函数 | 语义 |
@@ -182,6 +228,49 @@ Nuomi 的源码就是一堆 **S-表达式（S-expression）**，整体长得像 
 | `(get s i)` | 取字符串第 `i` 个字符（返回长度 1 的字符串） | `(get "abc" 0)` => `"a"` |
 | `(length s)` | 字符串字符数 | `(length "abc")` => `3` |
 
+### 5.8 高阶函数（★ 写复杂逻辑的主力）
+| 函数 | 语义 | 示例 |
+|------|------|------|
+| `(map fn coll)` | 逐元素映射，返回新列表 | `(map (lambda (v) (* v v)) [1 2 3])` => `(1 4 9)` |
+| `(filter pred coll)` | 保留 pred 为真的元素 | `(filter (lambda (v) (> v 2)) [1 2 3 4])` => `(3 4)` |
+| `(reduce fn coll)` | 归约（无初值，取首元素起算） | `(reduce + [1 2 3 4])` => `10` |
+| `(reduce fn init coll)` | 归约（带初值） | `(reduce + 100 [1 2 3])` => `106` |
+
+**流水线写法**（这是 Nuomi 里最像样的数据处理方式）：
+```nuomi
+(map (lambda (v) (* v v))
+     (filter (lambda (v) (> v 2))
+             (range 1 11)))
+;=> (9 16 25 36 49 64 81 100)
+```
+
+### 5.9 序列工具
+| 函数 | 语义 | 示例 |
+|------|------|------|
+| `(range n)` | `0 … n-1` | `(range 5)` => `(0 1 2 3 4)` |
+| `(range start end)` | `start … end-1` | `(range 2 5)` => `(2 3 4)` |
+| `(range start end step)` | 带步长（不含 end） | `(range 0 10 2)` => `(0 2 4 6 8)` |
+| `(last coll)` | 最后一个元素 | `(last '(1 2 3))` => `3` |
+| `(reverse coll)` | 反转 | `(reverse [1 2 3])` => `(3 2 1)` |
+| `(append a b)` | 拼接 | `(append [1 2] [3 4])` => `(1 2 3 4)` |
+| `(null? x)` | 是否为空 | `(null? [])` => `true` |
+| `(member? x coll)` | 是否包含（结构相等） | `(member? 2 [1 2 3])` => `true` |
+
+### 5.10 关联表
+| 函数 | 语义 |
+|------|------|
+| `(assoc lst key val)` | 替换匹配 key 的条目，无匹配则在表头新增；返回新表 |
+| `(assoc lst key)` | 只查询，找不到返回 `nil` |
+
+```nuomi
+(define alist (assoc (assoc '() 'apple 3) 'banana 5))
+(println alist)              ;=> (("banana" 5) ("apple" 3))
+(println (assoc alist 'apple 10))  ;=> (("apple" 10) ("banana" 5))
+```
+
+### 5.11 类型判断
+`(number? x)` `(string? x)` `(list? x)` `(vector? x)` `(function? x)` `(bool? x)`
+
 ---
 
 ## 6. 函数与闭包
@@ -190,6 +279,14 @@ Nuomi 的源码就是一堆 **S-表达式（S-expression）**，整体长得像 
 - **调用**：`(名字 实参...)`，实参个数必须等于形参个数（arity mismatch 会报错）。
 - **闭包**：`lambda` 和定义的函数都会捕获“定义时所在的环境”，因此可以引用外层变量（见 4 节 `make-adder` 例子）。
 - **递归**：直接递归即可（`fact` 示例，`(define (fact n) (if (= n 0) 1 (* n (fact (- n 1)))))`）。
+
+### 6.1 递归深度限制 ⚠️
+
+求值器会为每个嵌套表达式消耗一层栈，因此递归有上限：
+
+- **约3700+ 层函数递归**是安全的（实测`(depth 3000)` 正常）
+- 超过会输出可读报错 `maximum recursion depth exceeded (stack exhausted)` 并终止，**不会崩溃**
+- 写深层递归时用 `while` 或 `map`/`filter` 等高阶函数替代
 
 ---
 

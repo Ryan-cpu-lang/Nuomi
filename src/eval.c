@@ -116,6 +116,140 @@ static Value evalLambda(Value args, Env* env) {
     return OBJ_VAL(f);
 }
 
+/* (let ((name init) ...) body...)
+ * 绑定列表形如 ((x 1) (y 2))。先在外层 env 里求值所有 init，再建新 env 绑定。
+ * 这是「并行 let」：绑定之间不能互相引用（与 Scheme let* 的区别）。 */
+static Value evalLet(Value args, Env* env) {
+    Value bindings = listCar(args);
+    Value body = listCdr(args);
+
+    if (!isList(bindings) && !IS_NIL(bindings)) {
+        runtimeError("let: bad bindings"); return NIL_VAL;
+    }
+    int n = listLen(bindings);
+    ObjString** names = (ObjString**)malloc((n > 0 ? n : 1) * sizeof(ObjString*));
+    Value* inits = (Value*)malloc((n > 0 ? n : 1) * sizeof(Value));
+    int bad = 0;
+    int i = 0;
+    for (Value b = bindings; isList(b); b = listCdr(b)) {
+        Value pair = listCar(b);
+        if (!isList(pair) || listLen(pair) < 2) {
+            runtimeError("let: bad binding"); bad = 1; break;
+        }
+        Value nv = listCar(pair);
+        if (!(IS_OBJ(nv) && AS_OBJ(nv)->type == OBJ_STRING)) {
+            runtimeError("let: binding name is not a symbol"); bad = 1; break;
+        }
+        names[i] = (ObjString*)AS_OBJ(nv);
+        inits[i] = evalValue(listCar(listCdr(pair)), env);
+        i++;
+    }
+    if (bad) {
+        for (int k = 0; k < i; k++) release(inits[k]);
+        free(names); free(inits);
+        return NIL_VAL;
+    }
+
+    Env* inner = newEnv(env);
+    for (int k = 0; k < n; k++) {
+        envDefine(inner, names[k], inits[k]);   /* env持有一份 */
+        release(inits[k]);                      /* 放下我们这份 */
+    }
+    Value result = NIL_VAL;
+    bool first = true;
+    for (Value cur = body; isList(cur); cur = listCdr(cur)) {
+        Value v = evalValue(listCar(cur), inner);
+        if (!first) release(result);
+        result = v;
+        first = false;
+    }
+    release(OBJ_VAL(inner));
+    free(names); free(inits);
+    return result;
+}
+
+/* (let* ((name init) ...) body...) —— 顺序 let：后一个绑定能看到前面的 */
+static Value evalLetStar(Value args, Env* env) {
+    Value bindings = listCar(args);
+    Value body = listCdr(args);
+
+    Env* inner = newEnv(env);
+    for (Value b = bindings; isList(b); b = listCdr(b)) {
+        Value pair = listCar(b);
+        if (!isList(pair) || listLen(pair) < 2) {
+            runtimeError("let*: bad binding");
+            release(OBJ_VAL(inner));
+            return NIL_VAL;
+        }
+        Value nv = listCar(pair);
+        if (!(IS_OBJ(nv) && AS_OBJ(nv)->type == OBJ_STRING)) {
+            runtimeError("let*: binding name is not a symbol");
+            release(OBJ_VAL(inner));
+            return NIL_VAL;
+        }
+        Value init = evalValue(listCar(listCdr(pair)), inner);  /* 在 inner 里求值 */
+        envDefine(inner, (ObjString*)AS_OBJ(nv), init);
+        release(init);
+    }
+    Value result = NIL_VAL;
+    bool first = true;
+    for (Value cur = body; isList(cur); cur = listCdr(cur)) {
+        Value v = evalValue(listCar(cur), inner);
+        if (!first) release(result);
+        result = v;
+        first = false;
+    }
+    release(OBJ_VAL(inner));
+    return result;
+}
+
+/* (letrec ((name init) ...) body...)
+ * 先把全部名字绑为 nil，再依次求值并赋值——用于递归闭包。 */
+static Value evalLetrec(Value args, Env* env) {
+    Value bindings = listCar(args);
+    Value body = listCdr(args);
+
+    int n = listLen(bindings);
+    Env* inner = newEnv(env);
+    ObjString** names = (ObjString**)malloc((n > 0 ? n : 1) * sizeof(ObjString*));
+
+    int i = 0;
+    for (Value b = bindings; isList(b); b = listCdr(b)) {
+        Value pair = listCar(b);
+        if (!isList(pair) || listLen(pair) < 2 ||
+            !(IS_OBJ(listCar(pair)) && AS_OBJ(listCar(pair))->type == OBJ_STRING)) {
+            runtimeError("letrec: bad binding");
+            free(names); release(OBJ_VAL(inner)); return NIL_VAL;
+        }
+        names[i++] = (ObjString*)AS_OBJ(listCar(pair));
+        envDefine(inner, names[i-1], NIL_VAL);   /* 占位，让递归能引用到名字 */
+    }
+    i = 0;
+    for (Value b = bindings; isList(b); b = listCdr(b), i++) {
+        Value init = evalValue(listCar(listCdr(listCar(b))), inner);  /* 在 inner 里求值 */
+        Value* slot = envFind(inner, names[i]);
+        if (slot) {
+            retain(init);          /* 先持有新值 */
+            release(*slot);        /* 再放旧值（nil） */
+            *slot = init;
+            release(init);
+        } else {
+            release(init);
+        }
+    }
+    Value result = NIL_VAL;
+    bool first = true;
+    for (Value cur = body; isList(cur); cur = listCdr(cur)) {
+        Value v = evalValue(listCar(cur), inner);
+        if (!first) release(result);
+        result = v;
+        first = false;
+    }
+    release(OBJ_VAL(inner));
+    free(names);
+    return result;
+}
+
 /* (begin body...) */
 static Value evalBegin(Value args, Env* env) {
     Value cur = args;
@@ -160,6 +294,9 @@ static Value evalOr(Value args, Env* env) {
 }
 
 /* 求一个“调用”节点 (列表) */
+static Value evalListNode(Value listv, Env* env);
+static Value evalValueInner(Value node, Env* env);
+
 static Value evalListNode(Value listv, Env* env) {
     if (IS_NIL(listv)) return NIL_VAL;
     Value head = listCar(listv);
@@ -175,6 +312,9 @@ static Value evalListNode(Value listv, Env* env) {
         if (strcmp(sym->chars, "define") == 0) return evalDefine(args, env);
         if (strcmp(sym->chars, "set!") == 0)   return evalSet(args, env);
         if (strcmp(sym->chars, "lambda") == 0) return evalLambda(args, env);
+        if (strcmp(sym->chars, "let") == 0)    return evalLet(args, env);
+        if (strcmp(sym->chars, "let*") == 0)   return evalLetStar(args, env);
+        if (strcmp(sym->chars, "letrec") == 0) return evalLetrec(args, env);
         if (strcmp(sym->chars, "begin") == 0)  return evalBegin(args, env);
         if (strcmp(sym->chars, "and") == 0)    return evalAnd(args, env);
         if (strcmp(sym->chars, "or") == 0)     return evalOr(args, env);
@@ -215,7 +355,37 @@ static Value evalListNode(Value listv, Env* env) {
     return result;
 }
 
+/* 深度超限跳板：见 nuomi.h 中的说明 */
+jmp_buf g_depth_jmp;
+volatile int g_depth_overflow = 0;
+
+/* 深度上限。
+ * 这里数的是「嵌套求值表达式」层数，一次函数递归约占 3.2 层
+ * （函数体 → if 条件 → 算术实参 → 递归调用）。
+ * 256MB 栈下实测约 14000 层是 TCC 编译的安全边界，取 12000 留余量，
+ * 保证先给出可读报错，而不是撞穿栈导致崩溃。
+ * 对应约 3700+ 层函数递归 —— 树/图遍历、朴素排序与递归下降解析都够用。 */
+#define NUOMI_MAX_DEPTH 12000
+
 Value evalValue(Value node, Env* env) {
+    /* 递归深度守卫：evalValue 每个嵌套表达式消耗一层 C 栈（约 1.3KB）。
+     * 解释器跑在 256MB 大栈线程上（见 main.c），上限留足余量后卡在这里，
+     * 让超深递归得到一句可读的报错，而不是无声的段错误。 */
+    static int depth = 0;
+    if (depth >= NUOMI_MAX_DEPTH) {
+        if (!g_depth_overflow) {          /* 只报一次，避免 unwind 途中重复刷屏 */
+            runtimeError("maximum recursion depth exceeded (stack exhausted)");
+            g_depth_overflow = 1;
+        }
+        longjmp(g_depth_jmp, 1);
+    }
+    depth++;
+    Value r = evalValueInner(node, env);
+    depth--;
+    return r;
+}
+
+static Value evalValueInner(Value node, Env* env) {
 #ifdef NUOMI_DEBUG
     if (IS_OBJ(node)) {
         Obj* o = AS_OBJ(node);

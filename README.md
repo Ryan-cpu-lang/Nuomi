@@ -121,9 +121,18 @@ nuomi> (sq 9)
 | `(while c body...)` | 循环 |
 | `(define x 1)` / `(define (f a b) body...)` | 变量 / 函数定义 |
 | `(set! x v)` | 重新赋值 |
+| `(let ((x 1)) body...)` | **局部作用域**（并行绑定，不污染全局） |
+| `(let* ((x 1)) body...)` | 局部作用域（顺序绑定，后项可见前项） |
+| `(letrec ((f ...)) body...)` | 局部作用域（可自引用 / 互递归） |
 | `(lambda (a) body...)` | 匿名函数（闭包） |
 | `(begin a b c)` | 顺序执行，返回最后一个 |
 | `'x` | 引号（不求值） |
+| `(map fn coll)` `(filter pred coll)` `(reduce fn coll [init])` | **高阶函数** |
+| `(range n [end [step]])` | 数字序列（支持负步长） |
+| `(reverse coll)` `(append a b)` `(last coll)` `(null? x)` `(member? x coll)` | 序列工具 |
+| `(assoc lst key val)` | 关联表（两参为查询，未命中返回 `nil`） |
+| `(abs x)` `(floor x)` `(ceil x)` `(round x)` `(sqrt x)` `(pow a b)` `(min ...)` `(max ...)` | 数学函数 |
+| `(number? x)` `(string? x)` `(list? x)` `(vector? x)` `(function? x)` `(bool? x)` | 类型判断 |
 | `(list 1 2 3)` | 链表 |
 | `[1 2 3]` | 向量（数组，随机访问） |
 | `(cons car cdr)` `(car l)` `(cdr l)` `(nth l i)` `(get v i)` `(set v i x)` `(length x)` | 容器操作 |
@@ -133,6 +142,10 @@ nuomi> (sq 9)
 值类型：数字（double）、布尔 `true`/`false`、空 `nil`、字符串、符号、链表、向量、函数/闭包。
 
 `nil` 与 `false` 视为假，其余为真（含数字 0 与空字符串）。
+
+> **递归深度**：约 3700+ 层函数递归安全可用（早期版本约 500 层即栈溢出）；超出会输出可读报错 `maximum recursion depth exceeded` 并终止，不会崩溃。
+
+完整示例见 `samples/stdlib.nuomi`（标准库）与 `samples/scope.nuomi`（作用域/闭包）。
 
 ## 4. NUC 工具链（`nucutil`）
 

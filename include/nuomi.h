@@ -12,6 +12,7 @@
 #include <ctype.h>
 #include <stdbool.h>
 #include <math.h>
+#include <setjmp.h>
 
 /* ====================== 值 (Value) ====================== */
 
@@ -153,6 +154,13 @@ void runtimeError(const char* msg);
 Value evalValue(Value node, Env* env);
 ObjFunction* makeClosure(ObjString* name, Value paramList, Value body, Env* env);
 Value apply(Value callee, Value* argv, int argc, Env* env);
+
+/* 递归深度耗尽时跳出本次求值。
+ * 逐层 unwind 会带着半构造的参数/环境继续跑，产生雪崩式的次生报错
+ * （例如超深递归之后冒出 "- expects numbers"），对使用者毫无意义。
+ * 一旦深度超限就直接 longjmp 到驱动层，报告一句清晰错误后放弃本次求值。 */
+extern jmp_buf g_depth_jmp;
+extern volatile int g_depth_overflow;   /* 1 = 已因超深递归跳出 */
 
 /* ====================== 内置原生函数 ====================== */
 void registerNatives(Env* g);
