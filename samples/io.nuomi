@@ -2,7 +2,7 @@
 ;; Nuomi 编译模式 I/O 示例
 ;;   编译：nuomi -c samples/io.nuomi -o io.nuc
 ;;   真机运行（novus）：把 io.nuc 加载执行
-;;   本机验证：nucverify.py io.nuc   （用模拟器模拟内核，见 tools/）
+;;   本机验证：nucrun.py io.nuc   （用模拟器模拟内核，见 tools/）
 ;;
 ;; 编译模式的 I/O 走 novus 系统调用：
 ;;   print / println / print-int  →  write 系统调用（号 1）

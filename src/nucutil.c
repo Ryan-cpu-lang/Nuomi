@@ -195,7 +195,7 @@ static int64_t exec_text(NucFile* f, NucSegment* text, uint8_t* base) {
     if (find_trampoline_off(f) != (size_t)-1) {
         fprintf(stderr, "[run] 该产物含系统调用（print/println/print-int），"
                         "需在 novus 内核上运行；宿主仅能执行纯计算部分。\n");
-        fprintf(stderr, "[run] 可用 nucverify.py 在本机做等价验证（模拟内核）。\n");
+        fprintf(stderr, "[run] 可用 nucrun.py 在本机做等价验证（模拟内核）。\n");
         VirtualFree(base, 0, MEM_RELEASE);
         nuc_file_free(f);
         return 1;
