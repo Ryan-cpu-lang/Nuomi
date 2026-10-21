@@ -63,11 +63,18 @@ static NucSegment* find_rodata_seg(NucFile* f) {
         if (f->segments[i].type == NUC_SEG_RODATA) return &f->segments[i];
     return NULL;
 }
+static NucSegment* find_bss_seg(NucFile* f) {
+    for (uint16_t i = 0; i < f->seg_count; i++)
+        if (f->segments[i].type == NUC_SEG_BSS) return &f->segments[i];
+    return NULL;
+}
 /* 宿主执行时给 RODATA 找的映射位置：TEXT 之后紧跟，保证 lea rax,[rip+d] 能落到数据上。
  * 必须与编译期假定的「RODATA_vaddr - TEXT_vaddr」差值一致，否则 RIP 相对寻址会指错。
  * 编译期用 DATA_VADDR(0x500000) - TEXT_VADDR(0x400000) = 0x100000，
  * 故这里取 TEXT 实际基址 + 0x100000（并确保有足够空间）。 */
 #define RODATA_VA_DELTA 0x100000u
+/* BSS 紧随 RODATA：编译期 NUOMI_BSS_VADDR(0x600000) - TEXT_VADDR(0x400000) = 0x200000 */
+#define BSS_VA_DELTA    0x200000u
 
 static void apply_relocs(NucFile* f, NucSegment* text, uint8_t* base) {
     /* 宿主实际映射地址与规范里的逻辑 vaddr 未必相等（VirtualAlloc/mmap 给的是随机地址）。
@@ -96,9 +103,103 @@ static void apply_relocs(NucFile* f, NucSegment* text, uint8_t* base) {
     }
 }
 /* 拷贝 TEXT 到 base、应用重定位并调用入口；返回入口返回值（64 位，勿用 int 再接！） */
+/* ====================== 宿主侧 syscall 模拟 ======================
+ *
+ * 编译产物里所有 syscall 都 `call` 到 .text 段中的**统一跳板**
+ * __nuomi_syscall_trampoline（内容：int 0x80 ; ret）。
+ * 真机上：跳板 → int 0x80 → novus 内核 → 返回。
+ *
+ * 宿主上没有内核，故把跳板那 32 字节**原地替换**成一段调用宿主桩的序列：
+ *     mov r10, rdx / mov r11, rsi          （暂存 arg3 / arg2）
+ *     mov rcx, rax / mov rdx, rdi / mov r8, r11 / mov r9, r10   （SysV → Win x64 搬运）
+ *     mov rax, <宿主桩地址> / call rax / ret
+ * 共 31 字节，落在跳板的 32 字节预留区内。
+ *
+ * 这样「编译 → syscall 发射 → 号表 → 字符串布局 → itoa」整条链路都能在本机端到端验证。
+ *
+ * 约定见 include/novus_syscall.h：rax=号, rdi/rsi/rdx=参数, 返回在 rax。
+ */
+#include "novus_syscall.h"
+
+#if defined(_WIN32) && !defined(NO_WIN_RUN)
+#include <windows.h>
+
+static int g_syscall_exit_code = 0;
+static int g_syscall_count = 0;
+
+/* 宿主桩：Windows x64 约定（rcx=号, rdx=arg1, r8=arg2, r9=arg3）→ 返回值在 rax */
+static unsigned long long __stdcall host_syscall_stub(unsigned long long nr,
+                                                      unsigned long long a0,
+                                                      unsigned long long a1,
+                                                      unsigned long long a2) {
+    g_syscall_count++;
+    switch (nr) {
+        case NOVUS_SYS_WRITE: {
+            const uint8_t* buf = (const uint8_t*)(uintptr_t)a1;
+            size_t len = (size_t)a2;
+            FILE* out = (a0 == NOVUS_FD_STDERR) ? stderr : stdout;
+            if (buf && len) fwrite(buf, 1, len, out);
+            fflush(out);
+            return len;                    /* 返回写入字节数 */
+        }
+        case NOVUS_SYS_EXIT:
+            g_syscall_exit_code = (int)a0;
+            fflush(stdout);
+            ExitProcess((UINT)(a0 & 0xFF));
+            return 0;
+        default:
+            return (unsigned long long)-38;   /* -ENOSYS */
+    }
+}
+
+/* 在符号表里找 __nuomi_syscall_trampoline 的 .text 内偏移；找不到返回 (size_t)-1 */
+static size_t find_trampoline_off(NucFile* f) {
+    for (uint16_t i = 0; i < f->symtab_count; i++) {
+        const char* nm = f->strtab + f->symbols[i].name_off;
+        if (nm && strcmp(nm, "__nuomi_syscall_trampoline") == 0)
+            return (size_t)f->symbols[i].value;   /* FUNC 符号的 value = 段内偏移 */
+    }
+    return (size_t)-1;
+}
+
+/* 把跳板（32 字节）替换成「搬运寄存器 + call 宿主桩 + ret」 */
+static int patch_syscall_trampoline(uint8_t* text, size_t size, size_t tramp_off) {
+    if (tramp_off + 32 > size) return 0;
+    uint8_t* t = text + tramp_off;
+    int i = 0;
+    t[i++]=0x49; t[i++]=0x89; t[i++]=0xD2;   /* mov r10, rdx   (arg3) */
+    t[i++]=0x49; t[i++]=0x89; t[i++]=0xF3;   /* mov r11, rsi   (arg2) */
+    t[i++]=0x48; t[i++]=0x89; t[i++]=0xC1;   /* mov rcx, rax   (号) */
+    t[i++]=0x48; t[i++]=0x89; t[i++]=0xFA;   /* mov rdx, rdi   (arg1) */
+    t[i++]=0x4D; t[i++]=0x89; t[i++]=0xD8;   /* mov r8, r11    (arg2) */
+    t[i++]=0x4D; t[i++]=0x89; t[i++]=0xCA;   /* mov r9, r10    (arg3) */
+    t[i++]=0x48; t[i++]=0xB8;                 /* mov rax, imm64  (桩地址) */
+    uint64_t fn = (uint64_t)(uintptr_t)host_syscall_stub;
+    for (int k = 0; k < 8; k++) t[i++] = (uint8_t)(fn >> (8*k));
+    t[i++]=0xFF; t[i++]=0xD0;                 /* call rax */
+    t[i++]=0xC3;                              /* ret */
+    return 1;
+}
+#else
+static int g_syscall_exit_code = 0;
+static int g_syscall_count = 0;
+static int patch_syscall_trampoline(uint8_t* text, size_t size, size_t tramp_off) { return 0; }
+#endif
+
 static int64_t exec_text(NucFile* f, NucSegment* text, uint8_t* base) {
     memcpy(base, f->raw + text->file_offset, text->size);
     apply_relocs(f, text, base);
+    /* 该产物含系统调用（print/println/print-int）：
+       真机上由 novus 内核的 int 0x80 处理，宿主无内核，无法执行。
+       明确告知而不是让程序崩在 int 0x80 上。 */
+    if (find_trampoline_off(f) != (size_t)-1) {
+        fprintf(stderr, "[run] 该产物含系统调用（print/println/print-int），"
+                        "需在 novus 内核上运行；宿主仅能执行纯计算部分。\n");
+        fprintf(stderr, "[run] 可用 nucverify.py 在本机做等价验证（模拟内核）。\n");
+        VirtualFree(base, 0, MEM_RELEASE);
+        nuc_file_free(f);
+        return 1;
+    }
     uint8_t* entry = base + f->entry_point;
     int64_t (*fn)(void) = (int64_t (*)(void))entry;
     int64_t rc = fn();
@@ -121,10 +222,16 @@ static NucFile* run_load(const char* path, NucSegment** out_text) {
 #if defined(_WIN32) && !defined(NO_WIN_RUN)
 #include <windows.h>
 static int run_nuc(const char* path) {
-    NucSegment* text; NucFile* f = run_load(path, &text); if (!f) return 1;
-    /* 一次性映射 TEXT 及其后的 RODATA 空隙（RODATA 被放在 TEXT 基址 + RODATA_VA_DELTA，
-     * 与编译期假定的段间虚拟地址差一致，lea rax,[rip+d] 才能正确解析到字符串）。 */
-    size_t span = (size_t)RODATA_VA_DELTA + 0x1000;
+    setbuf(stderr, NULL);   /* 崩溃时也要能看到诊断 */
+    NucSegment* text; NucFile* f = run_load(path, &text);
+    if (!f) return 1;
+    /* 一次性映射 TEXT 及其后的 RODATA/BSS 空隙。
+     * 各段的虚拟地址差必须与编译期假定的完全一致，否则 lea rax,[rip+d] 会指错：
+     *   TEXT   @ 0x400000  → base + 0
+     *   RODATA @ 0x500000  → base + RODATA_VA_DELTA
+     *   BSS    @ 0x600000  → base + BSS_VA_DELTA
+     */
+    size_t span = (size_t)BSS_VA_DELTA + 0x1000;
     if ((size_t)text->size > span) span = text->size;
     uint8_t* base = (uint8_t*)VirtualAlloc(NULL, span,
                                            MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
@@ -133,6 +240,9 @@ static int run_nuc(const char* path) {
     NucSegment* ro = find_rodata_seg(f);
     if (ro && ro->file_offset)
         memcpy(base + RODATA_VA_DELTA, f->raw + ro->file_offset, ro->size);
+    /* BSS：内核会清零，宿主也清零 */
+    NucSegment* bs = find_bss_seg(f);
+    if (bs) memset(base + BSS_VA_DELTA, 0, bs->size);
     exec_text(f, text, base);
     VirtualFree(base, 0, MEM_RELEASE);
     nuc_file_free(f);
@@ -145,7 +255,9 @@ static int run_nuc(const char* path) {
 #define MAP_ANONYMOUS MAP_ANON  /* BSD/macOS 用 MAP_ANON */
 #endif
 static int run_nuc(const char* path) {
-    NucSegment* text; NucFile* f = run_load(path, &text); if (!f) return 1;
+    setbuf(stderr, NULL);   /* 崩溃时也要能看到诊断 */
+    NucSegment* text; NucFile* f = run_load(path, &text);
+    if (!f) return 1;
     long pg = sysconf(_SC_PAGESIZE); if (pg <= 0) pg = 4096;
     size_t asize = ((size_t)text->size + (size_t)pg - 1u) & ~((size_t)pg - 1u); /* 页对齐 */
     void* m = mmap(NULL, asize, PROT_READ | PROT_WRITE | PROT_EXEC,

@@ -18,10 +18,48 @@
  */
 #include "nuomi.h"
 #include "nucfmt.h"
+#include "novus_syscall.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdio.h>
+
+/* ====================== 内置运行时辅助：itoa ======================
+ *
+ * print-int 需要把整数变成十进制文本。编译模式目前没有堆、也没有静态数组，
+ * 无法用 Nuomi 源码写这段逻辑，故在编译期直接内嵌一段 x86-64 机器码，
+ * 作为**内置函数** __nuomi_itoa 发射到 .text 段。
+ *
+ * 签名（SysV AMD64，与 NUC 规范 §1 一致）：
+ *     void* __nuomi_itoa(int64 v, char* buf)
+ *   rdi = 数值, rsi = 缓冲区（至少 40 字节）
+ *   返回 rax = 文本首地址, rdx = 字节长度
+ * 数字从缓冲区末尾往前写，故缓冲区无需预先清零。
+ *
+ * 这段机器码由 tools/itoa_gen.py 生成，并用 x86-64 子集模拟器
+ * （tools/x86sim.py）验证过 2017 个取值（含 0/正负/边界/±10^12）全部正确。
+ * ⚠️ 改动本数组务必重新跑模拟器验证。
+ */
+static const uint8_t NUOMI_ITOA_CODE[178] = {
+    0x55, 0x48, 0x89, 0xE5, 0x48, 0x83, 0xEC, 0x40, 0x48, 0x89, 0x7D, 0xF8,
+    0x48, 0x89, 0x75, 0xF0, 0x48, 0x89, 0xF0, 0x48, 0x83, 0xC0, 0x20, 0x48,
+    0x89, 0x45, 0xE8, 0x48, 0xC7, 0x45, 0xE0, 0x00, 0x00, 0x00, 0x00, 0x48,
+    0x83, 0x7D, 0xF8, 0x00, 0x7D, 0x13, 0x48, 0xC7, 0x45, 0xE0, 0x01, 0x00,
+    0x00, 0x00, 0x48, 0x8B, 0x45, 0xF8, 0x48, 0xF7, 0xD8, 0x48, 0x89, 0x45,
+    0xF8, 0x48, 0x83, 0x7D, 0xF8, 0x00, 0x75, 0x11, 0x48, 0x8B, 0x45, 0xE8,
+    0x48, 0x83, 0xE8, 0x01, 0x48, 0x89, 0x45, 0xE8, 0xC6, 0x00, 0x30, 0xEB,
+    0x35, 0x48, 0x8B, 0x45, 0xF8, 0x48, 0x85, 0xC0, 0x74, 0x2C, 0x48, 0x8B,
+    0x4D, 0xE8, 0x48, 0x83, 0xE9, 0x01, 0x48, 0x89, 0x4D, 0xE8, 0x48, 0x8B,
+    0x45, 0xF8, 0x48, 0x99, 0x49, 0xC7, 0xC2, 0x0A, 0x00, 0x00, 0x00, 0x49,
+    0xF7, 0xFA, 0x48, 0x83, 0xC2, 0x30, 0x48, 0x8B, 0x4D, 0xE8, 0x88, 0x11,
+    0x48, 0x89, 0x45, 0xF8, 0xEB, 0xCB, 0x48, 0x83, 0x7D, 0xE0, 0x00, 0x74,
+    0x0F, 0x48, 0x8B, 0x45, 0xE8, 0x48, 0x83, 0xE8, 0x01, 0x48, 0x89, 0x45,
+    0xE8, 0xC6, 0x00, 0x2D, 0x48, 0x8B, 0x45, 0xE8, 0x48, 0x8B, 0x55, 0xF0,
+    0x48, 0x83, 0xC2, 0x20, 0x48, 0x2B, 0x55, 0xE8, 0xC9, 0xC3,
+};
+
+/* itoa 用的可写缓冲区（放BSS 段，运行时由内核按零初始化） */
+#define NUOMI_ITOA_BUFSZ 64
 
 /* ====================== 字节缓冲 ====================== */
 typedef struct { uint8_t* p; size_t len, cap; } CGBuf;
@@ -107,6 +145,25 @@ static void cg_store_rdx_local(CGBuf* b, int disp) {
 /* lea rax, [rip+disp32] (48 8D 05 xx xx xx xx) —— 取 RODATA 里字符串的地址。
  * 用 RIP 相对寻址：位置无关，且只需7 字节；disp32 在链接/装载期由重定位补上。 */
 static void cg_lea_rax_rip(CGBuf* b) { cg_u8(b,0x48); cg_u8(b,0x8D); cg_u8(b,0x05); cg_u32(b,0); }
+
+/* ---- 系统调用发射 ----
+ * 约定（见 include/novus_syscall.h）：
+ *   rax = syscall 号，rdi/rsi/rdx = 参数，返回值在 rax
+ *   入口用中断指令 int 0x80（内核 trap 打印含 cs=，说明是中断门而非 syscall 指令）
+ *
+ * 实现方式：所有 syscall 站点都 `call` 到 .text 段里的**统一跳板**，
+ * 跳板内容是 `int 0x80 ; ret`（真机上：进入内核 → 返回 → 回到调用点）。
+ * 这样做的好处：
+ *   ① syscall 指令只出现一次，宿主/调试器只需处理一个位置；
+ *   ② 跳板有富余字节，宿主可原地把它替换成「调宿主桩」的序列，
+ *      从而在本机端到端验证 I/O 链路（真机语义不受影响）。
+ */
+static void cg_mov_rdi_imm(CGBuf* b, int64_t v) { cg_u8(b,0x48); cg_u8(b,0xBF); cg_u64(b,(uint64_t)v); } /* mov rdi, imm64 */
+static void cg_mov_rsi_imm(CGBuf* b, int64_t v) { cg_u8(b,0x48); cg_u8(b,0xBE); cg_u64(b,(uint64_t)v); } /* mov rsi, imm64 */
+static void cg_mov_rdx_imm(CGBuf* b, int64_t v) { cg_u8(b,0x48); cg_u8(b,0xBA); cg_u64(b,(uint64_t)v); } /* mov rdx, imm64 */
+static void cg_mov_rcx_imm(CGBuf* b, int64_t v) { cg_u8(b,0x48); cg_u8(b,0xB9); cg_u64(b,(uint64_t)v); } /* mov rcx, imm64 */
+/* syscall 跳板：int 0x80 ; ret。放在 .text 段末尾，符号 __nuomi_syscall_trampoline */
+#define NUOMI_SYSCALL_TRAMP_SIZE 32
 
 /* ====================== 符号辅助 ====================== */
 static char* cg_strdup(const char* s) { size_t l = strlen(s)+1; char* p = (char*)malloc(l); memcpy(p,s,l); return p; }
@@ -279,6 +336,69 @@ static int func_find(CG* c, const char* name) {
 static bool cg_expr(CG* c, Value node);
 static void cg_strfix_add(CG* c, size_t text_pos, size_t rodata_off);
 
+/* call __nuomi_syscall_trampoline —— 所有 syscall 站点统一走跳板 */
+static void cg_call_trampoline(CG* c) {
+    int ti = func_find(c, "__nuomi_syscall_trampoline");
+    if (ti < 0) { /* 跳板还没发射（首次使用时按需补） */
+        snprintf(c->err, c->errlen, "internal: syscall trampoline missing");
+        return;
+    }
+    FuncDef* fd = &c->ft.f[ti];
+    cg_call_rel32(c->out);
+    rel_add(c, c->text_base + c->out->len - 4, fd->symidx);
+}
+
+/* ---- 内置函数：向文件描述符写一段字节 ----
+ * 已在 rax 里算好的「字符串首地址」（Nuomi 字符串对象地址）时：
+ *   真实数据在头部之后 NUOMI_STR_HEADER 字节处，长度在头部第 0 字节。
+ *   write(fd, buf, len) →  rdi=fd, rsi=buf, rdx=len, rax=号
+ */
+static void cg_emit_write_str(CG* c, Value strAddrNode) {
+    /* rax 已是字符串对象地址；先把它挪到 r10 保存 */
+    cg_u8(c->out, 0x49); cg_u8(c->out, 0x89); cg_u8(c->out, 0xC2);  /* mov r10, rax */
+    /* rsi = r10 + 16（数据起始） */
+    cg_u8(c->out, 0x49); cg_u8(c->out, 0x8B); cg_u8(c->out, 0xD2);  /* mov rdx, r10 (REX.B 扩 rm) */
+    cg_u8(c->out, 0x48); cg_u8(c->out, 0x83); cg_u8(c->out, 0xC2); cg_u8(c->out, 16); /* add rdx, 16 */
+    cg_u8(c->out, 0x48); cg_u8(c->out, 0x89); cg_u8(c->out, 0xD6);  /* mov rsi, rdx
+        * 目标 rsi 在 reg 字段、源 rdx 在 rm 字段，两者都 <8 → **不需要 REX.B**。
+        * 曾误写 49（REX.B 会把 rm 扩成 r14），导致 rsi 取到垃圾、write 的 buf 变成 0。 */
+    /* rdx = 长度（从头部第 0 字节读） */
+    cg_u8(c->out, 0x49); cg_u8(c->out, 0x8B); cg_u8(c->out, 0x52); cg_u8(c->out, 0x00); /* mov rdx, [r10] */
+    /* rdi = fd, rax = syscall 号 */
+    cg_mov_rdi_imm(c->out, NOVUS_FD_STDOUT);
+    cg_mov_rax_imm(c->out, NOVUS_SYS_WRITE);
+    cg_call_trampoline(c);
+}
+
+/* 内置函数：打印整数
+ * 流程：调用 __nuomi_itoa(值, BSS缓冲区) → rax=文本地址, rdx=长度 → write
+ * itoa 需要 2 个参数（rdi=值, rsi=buf），用 SysV 寄存器传。
+ */
+static bool cg_emit_print_int(CG* c, Value argNode) {
+    /* 求值参数 → rax */
+    if (!cg_expr(c, argNode)) return false;
+    /* 挪到 rdi 作为 itoa 的第 1 参数 */
+    cg_u8(c->out, 0x48); cg_u8(c->out, 0x89); cg_u8(c->out, 0xC7);  /* mov rdi, rax */
+    /* rsi = BSS 缓冲区地址（BSS_VADDR 是编译期固定虚拟地址） */
+    cg_mov_rsi_imm(c->out, (int64_t)NUOMI_BSS_VADDR);
+    /* call __nuomi_itoa（相对调用 + 重定位） */
+    int itoaIdx = func_find(c, "__nuomi_itoa");
+    if (itoaIdx < 0) { snprintf(c->err,c->errlen,"internal: itoa helper not registered"); return false; }
+    {
+        FuncDef* fd = &c->ft.f[itoaIdx];
+        cg_call_rel32(c->out);
+        rel_add(c, c->text_base + c->out->len - 4, fd->symidx);
+    }
+    /* itoa 返回：rax = 文本首地址（裸字节，无字符串头部），rdx = 长度。
+       write(fd, buf, len) 需要 rdi=fd, rsi=buf, rdx=len —— rdx 已经是长度，rax 已经是首地址，
+       只需把 buf 指针挪到 rsi（rsi = rax，无需 +16：itoa 输出的是纯文本，不是 Nuomi 字符串对象）。 */
+    cg_u8(c->out, 0x48); cg_u8(c->out, 0x89); cg_u8(c->out, 0xC6);  /* mov rsi, rax */
+    cg_mov_rdi_imm(c->out, NOVUS_FD_STDOUT);
+    cg_mov_rax_imm(c->out, NOVUS_SYS_WRITE);
+    cg_call_trampoline(c);
+    return true;
+}
+
 /* 发射 call rel32 + PC32 重定位（加载期解析，天然支持前向/递归引用） */
 static bool cg_call_by_index(CG* c, int fi, Value args) {
     FuncDef* fd = &c->ft.f[fi];
@@ -365,6 +485,39 @@ static bool cg_expr(CG* c, Value node) {
         cg_cmp_rdx_rax(c->out);                                /* cmp 左, 右 */
         cg_setcc_al(c->out, cc);
         cg_movzx_eax_al(c->out);
+        return true;
+    }
+    /* ---- 内置 I/O：print / println / print-int ---- */
+    if (strcmp(op,"print")==0 || strcmp(op,"println")==0) {
+        bool nl = (op[5] == 'l');   /* "println" 的第 6 个字符是 'l' */
+        int narg = 0; for (Value p = args; isList(p); p = listCdr(p)) narg++;
+        if (narg < 1) { snprintf(c->err,c->errlen,"%s expects at least 1 argument", op); return false; }
+        for (Value p = args; isList(p); p = listCdr(p)) {
+            Value a = listCar(p);
+            if (IS_OBJ(a) && AS_OBJ(a)->type == OBJ_STRING && !((ObjString*)AS_OBJ(a))->isSymbol) {
+                /* 字符串字面量：rax = 字符串对象地址 → write */
+                if (!cg_expr(c, a)) return false;
+                cg_emit_write_str(c, a);
+            } else {
+                /* 其它值按整数打印（走 itoa） */
+                if (!cg_emit_print_int(c, a)) return false;
+            }
+        }
+        if (nl) {
+            /* 打印换行：write(1, "\n", 1)。把 "\n" 放进 RODATA */
+            size_t off = rodataAddStr(&c->rodata, "\n", 1);
+            cg_lea_rax_rip(c->out);
+            cg_strfix_add(c, c->text_base + c->out->len - 4, off);
+            cg_emit_write_str(c, NIL_VAL);
+        }
+        cg_xor_eax(c->out);   /* 返回 nil */
+        return true;
+    }
+    if (strcmp(op,"print-int")==0) {
+        int narg = 0; for (Value p = args; isList(p); p = listCdr(p)) narg++;
+        if (narg != 1) { snprintf(c->err,c->errlen,"print-int expects 1 argument"); return false; }
+        if (!cg_emit_print_int(c, listCar(args))) return false;
+        cg_xor_eax(c->out);
         return true;
     }
     /* ---- let / let* / letrec ---- */
@@ -647,29 +800,94 @@ int nuomi_compile_to_nuc(const char* src, uint8_t** out, size_t* out_size, char*
 
     /* ---- 注册函数符号（值占位 0，发射后回填） ---- */
     CGBuf text; cg_init(&text);
+
+    /* ---- 检测是否需要内置运行时辅助（必须在发射用户函数之前决定） ---- */
+    bool needItoa = false, needSyscall = false;
+    for (int i = 0; i < nf; i++) {
+        Value f = forms[i];
+        if (isList(f) && cg_isSymbol(listCar(f))) {
+            const char* h = cg_symChars(listCar(f));
+            if (strcmp(h,"print")==0 || strcmp(h,"println")==0 || strcmp(h,"print-int")==0) {
+                needItoa = true; needSyscall = true;
+            }
+        }
+    }
+
+    /* ---- 内置辅助插到用户函数之前 ----
+     * 用户函数会 call 它们，所以它们必须先被注册（func_find 能查到）、
+     * 且先被发射（重定位指向正确的 .text 偏移）。
+     * 做法：把用户函数整体后移，把内置辅助插到数组前部。 */
+    int nUser = c.ft.n;
+    int nBuilt = (needSyscall?1:0) + (needItoa?1:0);
+    if (nBuilt > 0) {
+        c.ft.cap += nBuilt;
+        c.ft.f = (FuncDef*)realloc(c.ft.f, c.ft.cap*sizeof(FuncDef));
+        memmove(c.ft.f + nBuilt, c.ft.f, nUser*sizeof(FuncDef));
+        c.ft.n = nBuilt + nUser;
+        memset(c.ft.f, 0, nBuilt*sizeof(FuncDef));
+        int k = 0;
+        if (needSyscall) {
+            FuncDef* fd = &c.ft.f[k++];
+            fd->name = cg_strdup("__nuomi_syscall_trampoline");
+            fd->nparams = 0;
+        }
+        if (needItoa) {
+            FuncDef* fd = &c.ft.f[k++];
+            fd->name = cg_strdup("__nuomi_itoa");
+            fd->nparams = 2;
+        }
+    }
     for (int i = 0; i < c.ft.n; i++) c.ft.f[i].symidx = i;   /* 符号表下标 = 注册顺序 */
 
     /* ---- 第二遍：发射每个函数 ---- */
     for (int i = 0; i < c.ft.n; i++) {
+        FuncDef* fd = &c.ft.f[i];
+        if (fd->name && strcmp(fd->name, "__nuomi_syscall_trampoline") == 0) {
+            /* 跳板：int 0x80 ; ret ；后 13 字节留白，供宿主原地替换成宿主桩 */
+            fd->offset = text.len;
+            cg_u8(&text, 0xCD);
+            cg_u8(&text, (uint8_t)NOVUS_SYSCALL_INTR_VECTOR);
+            cg_u8(&text, 0xC3);
+            for (int k = 3; k < NUOMI_SYSCALL_TRAMP_SIZE; k++) cg_u8(&text, 0x90);
+            fd->size = NUOMI_SYSCALL_TRAMP_SIZE;
+            continue;
+        }
+        if (fd->name && strcmp(fd->name, "__nuomi_itoa") == 0) {
+            /* itoa：机器码固定，直接贴进 .text */
+            fd->offset = text.len;
+            cg_put(&text, NUOMI_ITOA_CODE, sizeof NUOMI_ITOA_CODE);
+            fd->size = sizeof NUOMI_ITOA_CODE;
+            continue;
+        }
         c.text_base = text.len;
         if (!cg_compile_function(&c, &c.ft.f[i], &text)) { snprintf(err,errlen,"%s", c.err); goto fail; }
     }
 
-    /* ---- 入口（自带栈帧：入口里的 define/while 局部槽才安全） ---- */
+    /* ---- 入口（自带栈帧：入口里的 define/while 局部槽才安全） ----
+     * 入口会依次执行**所有**非函数定义的顶层表达式
+     * （早前只执行最后一个，导致 (println ...) 多行时只输出一行）。 */
     size_t entry_off = text.len;
     c.text_base = 0;              /* 入口直接写进 text（out 即最终位置），故 base=0 */
     c.out = &text; scope_reset(&c); c.err[0] = 0;
     cg_prologue(&text);
-    if (entryIdx >= 0) {
-        /* 最后一个顶层表达式作为入口 */
-        if (!cg_expr(&c, forms[entryIdx])) { snprintf(err,errlen,"%s", c.err); goto fail; }
-        if (lab_resolve(&c) != 0) { snprintf(err,errlen,"%s", c.err); goto fail; }
-    } else {
-        int mi = -1;
-        for (int i = 0; i < c.ft.n; i++) if (strcmp(c.ft.f[i].name,"main")==0) { mi = i; break; }
-        if (mi < 0) { snprintf(err,errlen,"no entry expression and no 'main' function"); goto fail; }
-        if (!cg_call_by_index(&c, mi, NIL_VAL)) { snprintf(err,errlen,"%s", c.err); goto fail; }
+    {
+        int nTop = 0;
+        for (int i = 0; i < nf; i++) {
+            Value f = forms[i];
+            if (isList(f) && cg_isSymbol(listCar(f))
+                && strcmp(cg_symChars(listCar(f)), "define") == 0) continue;  /* 定义已单独处理 */
+            if (!cg_expr(&c, f)) { snprintf(err,errlen,"%s", c.err); goto fail; }
+            nTop++;
+        }
+        if (nTop == 0) {
+            /* 没有顶层表达式 → 调用 main 函数 */
+            int mi = -1;
+            for (int i = 0; i < c.ft.n; i++) if (strcmp(c.ft.f[i].name,"main")==0) { mi = i; break; }
+            if (mi < 0) { snprintf(err,errlen,"no entry expression and no 'main' function"); goto fail; }
+            if (!cg_call_by_index(&c, mi, NIL_VAL)) { snprintf(err,errlen,"%s", c.err); goto fail; }
+        }
     }
+    if (lab_resolve(&c) != 0) { snprintf(err,errlen,"%s", c.err); goto fail; }
     cg_leave(&text);
     cg_ret(&text);
     c.out = NULL;
@@ -705,6 +923,10 @@ int nuomi_compile_to_nuc(const char* src, uint8_t** out, size_t* out_size, char*
     if (c.rodata.buf.len > 0)
         nuc_builder_add_segment(nb, NUC_SEG_RODATA, DATA_VADDR, c.rodata.buf.len,
                                 NUC_VM_READ | NUC_VM_USER, c.rodata.buf.p, (uint32_t)c.rodata.buf.len);
+    /* BSS：可写缓冲区（itoa 用），不占文件空间，加载时由内核清零 */
+    if (needItoa)
+        nuc_builder_add_segment(nb, NUC_SEG_BSS, NUOMI_BSS_VADDR, NUOMI_ITOA_BUFSZ,
+                                NUC_VM_READ | NUC_VM_WRITE | NUC_VM_USER, NULL, 0);
     /* 重定位：调用点 VA = text.vaddr + rel32 偏移（§7.1/§7.2） */
     for (int i = 0; i < c.nrel; i++)
         nuc_builder_add_reloc(nb, TEXT_VADDR + (uint64_t)c.rels[i].text_pos, R_X86_64_PC32,

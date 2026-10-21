@@ -44,6 +44,10 @@
 #define NUOMI_STR_HEADER   16
 #define NUOMI_STR_BYTES(sz) (NUOMI_STR_HEADER + (((sz) + 7u) & ~7u))
 
+/* BSS 段（未初始化数据）虚拟地址：紧随 RODATA 之后。
+ * 运行时供内置辅助函数（如 itoa）当可写缓冲区用。 */
+#define NUOMI_BSS_VADDR    0x600000u
+
 /* 段权限位 */
 #define NUC_VM_READ   1
 #define NUC_VM_WRITE  2
