@@ -37,6 +37,8 @@ Nuomi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从�
 
 **不想用安装包？** 用便携脚本 [`installer/install.cmd`](installer/install.cmd)（同样是"复制到用户目录 + 加 PATH"，不需要 Inno Setup）。
 
+装完后开始菜单里多了一个 **「运行 Nuomi 脚本」** 快捷方式：把任意 `.nuomi` 文件拖到它上面就能运行，而且跑完窗口不自动关闭（方便看输出）。它等价于以前的「运行Nuomi脚本.bat」，但不再写死仓库路径、也不依赖那个 bat 了。
+
 **想自己重编安装包？** 用 [Inno Setup](https://jrsoftware.org/isdl.php) 打开 [`installer/Nuomi.iss`](installer/Nuomi.iss) 按 F9，或命令行：
 ```bat
 "C:\Program Files\Inno Setup 7\ISCC.exe" installer\Nuomi.iss
