@@ -164,7 +164,9 @@ extern volatile int g_depth_overflow;   /* 1 = 已因超深递归跳出 */
 
 /* ====================== 内置原生函数 ====================== */
 void registerNatives(Env* g);
+void registerProcNatives(Env* g);   /* 进程组（src/proc.c），由 registerNatives 转发 */
 void registerJsonNatives(Env* g);   /* JSON 组（src/json.c），由 registerNatives 转发 */
+void registerHttpNatives(Env* g);   /* HTTP 组（src/http.c），由 registerNatives 转发 */
 void defNative(Env* g, const char* name, NativeFn fn);   /* 原语注册器（native.c 实现，各原语文件共用） */
 
 /* ====================== 驱动 ====================== */
