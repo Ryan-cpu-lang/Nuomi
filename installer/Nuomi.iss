@@ -55,8 +55,13 @@ Source: "..\LICENSE";    DestDir: "{app}"; Flags: ignoreversion
 [Icons]
 Name: "{group}\Nuomi 命令行"; Filename: "{app}\nuomi.exe"; \
       IconFilename: "{app}\nuomi.ico"; Comment: "运行 Nuomi 脚本（nuomi xxx.nuomi）"
-Name: "{group}\运行 Nuomi 脚本"; Filename: "{sys}\cmd.exe"; Parameters: "/k nuomi"; \
+; 拖拽启动器：直接用绝对路径指向本机安装的 nuomi.exe，不再依赖 PATH 解析，
+; 避免系统里若存在其它同名/旧版 nuomi.exe（如 F:\应用\Nuomi 里的旧二进制）被误命中。
+Name: "{group}\运行 Nuomi 脚本"; Filename: "{sys}\cmd.exe"; Parameters: "/k ""{app}\nuomi.exe"""; \
       IconFilename: "{app}\nuomi.ico"; Comment: "把 .nuomi 脚本拖到这里即可运行（窗口不自动关闭）"
+Name: "{autodesktop}\运行 Nuomi 脚本"; Filename: "{sys}\cmd.exe"; Parameters: "/k ""{app}\nuomi.exe"""; \
+      IconFilename: "{app}\nuomi.ico"; Tasks: desktopicon; \
+      Comment: "把 .nuomi 脚本拖到这里即可运行（窗口不自动关闭）"
 Name: "{group}\Nuomi 官网"; Filename: "{#MyAppURL}"
 Name: "{autodesktop}\Nuomi"; Filename: "{app}\nuomi.exe"; \
       IconFilename: "{app}\nuomi.ico"; Tasks: desktopicon
