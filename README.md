@@ -24,6 +24,25 @@ Nuomi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从�
 
 > 完整版本历史与各平台预编译包见 [**Releases**](https://github.com/Ryan-cpu-lang/Nuomi/releases) 页面。
 
+#### 📦 一键安装（推荐）：装完 cmd 里直接打 `nuomi`
+
+下载 **[`Nuomi-Setup.exe`](installer/out/Nuomi-Setup.exe)** → 双击 → 一路下一步即可。
+
+- 装到 `%LOCALAPPDATA%\Programs\Nuomi`，**用户级安装，不需要管理员权限**
+- **自动把该目录加进你的用户 PATH** —— 装完新开一个 cmd，直接敲 `nuomi 脚本.nuomi` 就能跑（不用敲全路径、不用配环境变量）
+- 附带开始菜单快捷方式与卸载程序；**卸载时会自动把自己从 PATH 里摘掉**，不留垃圾路径
+- 中英文安装界面（默认简体中文）
+
+> 装了之后老窗口不生效是正常的：PATH 改动只对**新开**的命令行窗口可见，重开一个 cmd / PowerShell 即可。
+
+**不想用安装包？** 用便携脚本 [`installer/install.cmd`](installer/install.cmd)（同样是"复制到用户目录 + 加 PATH"，不需要 Inno Setup）。
+
+**想自己重编安装包？** 用 [Inno Setup](https://jrsoftware.org/isdl.php) 打开 [`installer/Nuomi.iss`](installer/Nuomi.iss) 按 F9，或命令行：
+```bat
+"C:\Program Files\Inno Setup 7\ISCC.exe" installer\Nuomi.iss
+```
+产出 `installer\out\Nuomi-Setup.exe`。
+
 ### 🖥️ Novus OS（诺维斯）
 
 直接下载 [`dist/novus/`](dist/novus/) 下**已编译好的 .nuc**，拷进 novus-os 用 shell exec 执行：
