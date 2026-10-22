@@ -1153,7 +1153,7 @@ static Value natAppend(int c, Value* a, Env* e) {
 }
 
 /* ---------- 注册 ---------- */
-static void defNative(Env* g, const char* name, NativeFn fn) {
+void defNative(Env* g, const char* name, NativeFn fn) {
     ObjNative* nat = (ObjNative*)allocObj(sizeof(ObjNative), OBJ_NATIVE);
     nat->fn = fn;
     nat->name = (char*)malloc(strlen(name) + 1);
@@ -1213,6 +1213,9 @@ void registerNatives(Env* g) {
     defNative(g, "mv", natMv);
     defNative(g, "cp", natCp);
     defNative(g, "ls", natLs);
+
+    /* JSON 组单独成文件（src/json.c）：解析器代码量大，混在这里会难维护 */
+    registerJsonNatives(g);
 
     /* 高阶函数与列表工具 */
     defNative(g, "map", natMap);

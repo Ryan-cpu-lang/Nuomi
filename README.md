@@ -149,6 +149,7 @@ nuomi> (sq 9)
 | `(read-file p)` `(write-file p s)` `(append-file p s)` | 读整文件 / 覆盖写 / 追加写 |
 | `(ls dir)` | 列目录 → 文件名列表（不含 `.` `..`；失败 `nil`） |
 | `(mkdir p)` `(rmdir p)` `(delete p)` `(mv a b)` `(cp a b)` | 建目录 / 删空目录 / 删文件 / 移动 / 复制（返回布尔） |
+| `(json-parse s)` `(json-get v k...)` `(json-stringify v)` `(json-obj k v...)` | JSON 解析 / 多层路径取值 / 序列化 / 构造对象 |
 
 值类型：数字（double）、布尔 `true`/`false`、空 `nil`、字符串、符号、链表、向量、函数/闭包。
 
@@ -161,6 +162,31 @@ nuomi> (sq 9)
 > 📁 **文件系统**：糯米在 novus 里是系统壳语言（≈ PowerShell），文件操作是基本功。宿主用 Win32 API、其他平台 POSIX，将来上 novus 换 syscall、**脚本接口不变**。软错误语义：失败返回 `nil`/`false`/`-1`，不中止程序。**故意不提供递归删除**——`rm -rf` 请用 `ls`+`delete`+`rmdir` 在脚本层自己组合（`samples/files.nuomi` 有 6 行实现）。这是真实破坏力，删了不可恢复。
 >
 > 💡 **游戏防闪烁三件套**（`samples/snake.nuomi` 实测有效）：每帧**不要** `cls` 清屏（抹全屏就是闪瞎眼的根因）——用 `home` 只把光标移回左上角，所有行等宽重绘自然覆盖旧画面；再把整帧拼成**一个**字符串用 `draw` 一次写出，控制台整帧呈现，不会看到画到一半的半成品。
+
+### 📋 JSON 与「糯米写启动器」路线图
+
+`json-parse` / `json-get` / `json-stringify` / `json-obj`。对象 → alist（`(键 . 值)` 链节），数组 → 向量。
+
+```lisp
+;; 多层路径取值，启动器里最常用的一招
+(json-get (json-parse 文本) "downloads" "client" "sha1")
+```
+
+启动器全靠 JSON 吃饭（Mojang 版本清单、Modrinth API、实例配置）。示例见 `samples/json.nuomi`，回归测试见 `tests/json-test.nuomi`。
+
+⚠️ 两个已知取舍：对象取值是 **O(n) 线性扫描**（还没做字典类型，将来版本索引几千项会慢）；`{}` 解析成 `nil`，序列化回去是 `null`（空对象与空值不可区分）。
+
+**通往启动器的路线图** —— 糯米写 MC 启动器还缺什么，按依赖顺序：
+
+| 能力 | 状态 |
+|---|---|
+| 文件操作（下载落盘、管理版本目录） | ✅ 12 个原语 |
+| JSON（读懂版本清单 / Modrinth API） | ✅ |
+| **HTTP 请求**（拉清单、下载文件） | ⬜ 下一块 |
+| **进程启动**（spawn java、传参、抓日志） | ⬜ |
+| ZIP（解压 mods / natives） | ⬜ |
+| SHA-1（文件完整性校验） | ⬜ |
+| 并发下载 | ⬜ 当前单线程串行 |
 
 > **递归深度**：约 3700+ 层函数递归安全可用（早期版本约 500 层即栈溢出）；超出会输出可读报错 `maximum recursion depth exceeded` 并终止，不会崩溃。
 
