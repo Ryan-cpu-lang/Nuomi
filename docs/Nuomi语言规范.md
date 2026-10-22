@@ -442,6 +442,36 @@ number   := <可被 strtod 整体解析的令牌>
 **示例**：`samples/json.nuomi`（从 Mojang 风格清单里刨出启动游戏所需信息）、
 `tests/json-test.nuomi`（37 项回归测试）。
 
+### 7.17 HTTP（客户端）
+
+启动器要拉 Mojang 清单、Modrinth API、下载 jar，故加一组 HTTP 原语。
+Windows 宿主用 WinINet（运行时动态加载 `wininet.dll`，零链接依赖）；
+其他平台暂未实现（将来接 novus 网络 syscall，脚本接口不变）。
+
+| 函数 | 语义 |
+|------|------|
+| `(http-get url [ua])` | GET，返回响应体字符串；失败 `nil` |
+| `(http-head url [ua])` | HEAD，返回状态码；拿不到返回 `-1` |
+| `(http-length url [ua])` | 取 `Content-Length`；拿不到 `-1` |
+| `(http-download url dest [ua])` | GET 并落盘，返回写入字节数 |
+| `(http-download-from url dest offset [ua])` | **断点续传**：带 `Range: bytes=offset-` |
+
+要点：
+- **软错误**：失败返回 `nil`/`-1` 并打印 `Runtime error`，不中止程序。
+- **双通道**（本机代理环境下的实测结论）：
+  · 简单 API（`InternetOpenUrlA`）—— 皮实，HTTPS 走代理也通，但拿不到状态码；
+  · 高级 API（`HttpOpenRequest`）—— 有状态码/HEAD，但本机 TLS + 代理会挂。
+  默认按环境变量 `NUOMI_HTTP_MODE=advanced|simple` 选择，未设则用简单通道。
+- **续传的追加/覆盖判定**：简单通道拿不到 206，改用**内容自校验** ——
+  请求头是 `Range: bytes=<offset>-`，服务器只有两种行为：
+  遵守 Range → 返回剩余部分（开头与已下载文件的开头不同）；
+  忽略 Range → 返回整份（开头相同）。据此决定追加还是覆盖。
+- Range 请求必须同时带 `Accept-Encoding: identity`，否则服务器回 gzip 压缩流，
+  而带 Range 的响应 WinINet 不自动解压，追加到未压缩文件上就是乱码。
+
+**示例**：`samples/http.nuomi`（拉 Mojang 清单 → 选版本 → 读元数据 →
+Maven 坐标转 jar 路径 → 断点续传 → 生成实例配置，全流程真网络）。
+
 ---
 
 ## 8. 错误与诊断语义（重要）

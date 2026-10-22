@@ -179,6 +179,69 @@ static Value natList(int c, Value* a, Env* e) {
     }
     return head;
 }
+
+/* substring：按字节切字符串。
+ *   (substring s)            → 整串
+ *   (substring s start)      → 从 start 到末尾
+ *   (substring s start end)  → [start, end)
+ * start / end 支持负数：-1 表示末尾，倒数第 2 个即 -2（同 json-get 的负索引风格）。
+ * 越界一律夹到合法范围，不报错。 */
+static Value natSubstring(int c, Value* a, Env* e) {
+    (void)e;
+    if (c < 1 || c > 3) { runtimeError("substring expects (s [start [end]])"); return NIL_VAL; }
+    Value v = a[0];
+    if (!IS_OBJ(v) || AS_OBJ(v)->type != OBJ_STRING) { runtimeError("substring: not a string"); return NIL_VAL; }
+    ObjString* str = (ObjString*)AS_OBJ(v);
+    int len = str->length;
+    long long st = 0, en = len;
+    if (c >= 2) {
+        if (!IS_NUM(a[1])) { runtimeError("substring: start must be a number"); return NIL_VAL; }
+        st = (long long)AS_NUM(a[1]);
+    }
+    if (c >= 3) {
+        if (!IS_NUM(a[2])) { runtimeError("substring: end must be a number"); return NIL_VAL; }
+        en = (long long)AS_NUM(a[2]);
+    }
+    if (st < 0) st += len;          /* 负数 → 从末尾数 */
+    if (en < 0) en += len;
+    if (st < 0) st = 0;
+    if (en > len) en = len;
+    if (st > len) st = len;
+    if (en < st) en = st;
+    int n = (int)(en - st);
+    ObjString* out = internString(str->chars + st, n, false);
+    return OBJ_VAL(out);
+}
+
+/* string-search：在 haystack 里找 needle，返回首次出现的下标；找不到返回 -1。
+ *   (string-search haystack needle)        → 从头开始找
+ *   (string-search haystack needle start)  → 从 start 位置开始找（找第 2、第 3 个分隔符时用）
+ * 负的 start 表示从末尾数（-1 = 末尾）。 */
+static Value natStringSearch(int c, Value* a, Env* e) {
+    (void)e;
+    if (c < 2 || c > 3) { runtimeError("string-search expects (haystack needle [start])"); return NIL_VAL; }
+    if (!IS_OBJ(a[0]) || AS_OBJ(a[0])->type != OBJ_STRING ||
+        !IS_OBJ(a[1]) || AS_OBJ(a[1])->type != OBJ_STRING) {
+        runtimeError("string-search: expects two strings");
+        return NIL_VAL;
+    }
+    ObjString* h = (ObjString*)AS_OBJ(a[0]);
+    ObjString* n = (ObjString*)AS_OBJ(a[1]);
+    long long from = 0;
+    if (c == 3) {
+        if (!IS_NUM(a[2])) { runtimeError("string-search: start must be a number"); return NIL_VAL; }
+        from = (long long)AS_NUM(a[2]);
+    }
+    if (from < 0) from += h->length;
+    if (from < 0) from = 0;
+    if (from > h->length) return NUM_VAL(-1);
+    if (n->length == 0) return NUM_VAL((double)from);
+    for (int i = (int)from; i + n->length <= h->length; i++) {
+        if (memcmp(h->chars + i, n->chars, (size_t)n->length) == 0) return NUM_VAL(i);
+    }
+    return NUM_VAL(-1);
+}
+
 static Value natLength(int c, Value* a, Env* e) {
     (void)e;
     if (c != 1) { runtimeError("length expects 1 arg"); return NIL_VAL; }
@@ -840,11 +903,13 @@ static Value natMap(int c, Value* a, Env* e) {
         if (!collAt(a[1], i, &item)) continue;
         Value arg = item;
         Value r = apply(a[0], &arg, 1, e);
-        release(arg);
+        /* arg 是借用别名：不能 release(arg)（会减掉 item 的引用计数，
+           item 由本函数负责释放，见循环末尾）。 */
         Value nh = prependCell(out, r);
         release(out);
         out = nh;
         release(r);
+        release(item);      /* 释放 collAt 给本文的那一份 */
     }
     return out;
 }
@@ -859,14 +924,17 @@ static Value natFilter(int c, Value* a, Env* e) {
     int nk = 0;
     for (int i = 0; i < n; i++) {
         Value item;
-        if (!collAt(a[1], i, &item)) continue;
+        if (!collAt(a[1], i, &item)) continue;   /* collAt 已 retain(item)：本文 owns 一份 */
         Value arg = item;
         Value p = apply(a[0], &arg, 1, e);
-        release(arg);
+        /* 注意：arg 只是借用别名，不能 release(arg) —— 那会把 item 的引用计数减掉，
+           而下面还要把 item 存进 keep[]（keep 里的对象必须是活的）。
+           正确做法：命中的元素把「本文 owns 的那一份所有权」转移给 keep[]，
+           未命中的才 release 掉。 */
         bool yes = !isFalsey(p);
         release(p);
-        if (yes) keep[nk++] = item;   /* item 已被 collAt retain */
-        release(item);
+        if (yes) keep[nk++] = item;   /* 所有权转移给 keep[]，不 release */
+        else release(item);           /* 未命中 → 释放本文这份 */
     }
     Value out = NIL_VAL;
     for (int i = nk - 1; i >= 0; i--) {
@@ -1183,6 +1251,8 @@ void registerNatives(Env* g) {
     defNative(g, "cdr", natCdr);
     defNative(g, "list", natList);
     defNative(g, "length", natLength);
+    defNative(g, "substring", natSubstring);
+    defNative(g, "string-search", natStringSearch);
     defNative(g, "nth", natNth);
     defNative(g, "get", natGet);
     defNative(g, "set", natSet);
@@ -1216,6 +1286,8 @@ void registerNatives(Env* g) {
 
     /* JSON 组单独成文件（src/json.c）：解析器代码量大，混在这里会难维护 */
     registerJsonNatives(g);
+    /* HTTP 组单独成文件（src/http.c）：WinHTTP 动态加载，代码量大 */
+    registerHttpNatives(g);
 
     /* 高阶函数与列表工具 */
     defNative(g, "map", natMap);

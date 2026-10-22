@@ -86,7 +86,17 @@ void release(Value v) {
 #ifdef NUOMI_DEBUG
     fprintf(stderr, "  [release] @%p rc=%d\n", (void*)o, o->refcount);
 #endif
+#ifdef NUOMI_DEBUG
+    if (o->refcount <= 0) {
+        /* 过度释放：引用计数已经为 0 还要再减 —— 一定是某处 release 了不属它的引用。
+           立即中止并把对象信息打出来，便于定位（正式版保持宽容，不中止）。 */
+        fprintf(stderr, "[FATAL] over-release: obj=%p type=%d refcount=%d\n",
+                (void*)o, (int)o->type, o->refcount);
+        abort();
+    }
+#else
     if (o->refcount <= 0) return;
+#endif
     o->refcount--;
     if (o->refcount == 0) freeObject(o);
 }
@@ -94,6 +104,10 @@ void release(Value v) {
 static void freeObject(Obj* o) {
     /* 调试：标记已进入释放，若再次被访问即 use-after-free */
 #ifdef NUOMI_DEBUG
+    #ifdef NUOMI_DEBUG
+    fprintf(stderr, "[FREE] seq=%lu type=%d @%p phase='%s'\n",
+            o->dbgSeq, (int)o->type, (void*)o, g_dbg_phase);
+#endif
     liveRemove(o);
     if (o->type == OBJ_LIST) {
         ObjList* l = (ObjList*)o;
@@ -201,7 +215,16 @@ ObjString* internString(const char* chars, int len, bool isSymbol) {
     while (g_intern[h]) {
         ObjString* s = g_intern[h];
         if (s->length == len && s->isSymbol == isSymbol &&
-            memcmp(s->chars, chars, len) == 0) return s;
+            memcmp(s->chars, chars, len) == 0) {
+            /* ⚠️ 去重命中也必须 retain —— 本函数的契约是「返回的串由调用方拥有一份引用」
+               （与新分配路径一致：makeString 给 1 份 + 驻留表 1 份）。
+               曾在此处直接 return 不 retain，导致同一内容第二次驻留时调用方拿到的是
+               「幽灵引用」：后续 release 会把驻留中的串提前释放，
+               而驻留表仍指着它 → 之后 internString 返回悬垂指针（use-after-free）。
+               症状是非确定性段错误，且与「相同内容的串重复出现」强相关。 */
+            s->obj.refcount++;
+            return s;
+        }
         h = (h + 1) & mask;
     }
     ObjString* s = makeString(chars, len, isSymbol);

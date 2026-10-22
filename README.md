@@ -138,6 +138,8 @@ nuomi> (sq 9)
 | `[1 2 3]` | 向量（数组，随机访问） |
 | `(cons car cdr)` `(car l)` `(cdr l)` `(nth l i)` `(get v i)` `(set v i x)` `(length x)` | 容器操作 |
 | `(str a b c)` | 拼接成字符串 |
+| `(substring s [start [end]])` | 按**字节**切片；start/end 支持负数（`-1`=末尾） |
+| `(string-search hay needle [start])` | 找子串，返回下标；找不到 `-1` |
 | `(print ...) (println ...)` | 输出 |
 | `(input [提示])` `(input-int [提示])` | 行式输入（读到回车为止） |
 | `(cls)` `(home)` `(show-cursor)` | 清屏+归位+隐光标 / 只归位+隐光标 / 恢复光标 |
