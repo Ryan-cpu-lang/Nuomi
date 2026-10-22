@@ -66,7 +66,8 @@ def main():
     # 输出多尺寸 ICO
     base = bg.resize((256, 256), Image.LANCZOS)
     sizes = [(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)]
-    base.save(OUT, format="ICO", sizes=sizes)
+    # bitmap_format="bmp" -> 不用 PNG 压缩，兼容 Inno Setup 的图标编译器（它只认 BMP 图标）
+    base.save(OUT, format="ICO", sizes=sizes, bitmap_format="bmp")
     print(f"wrote {OUT}")
 
 if __name__ == "__main__":

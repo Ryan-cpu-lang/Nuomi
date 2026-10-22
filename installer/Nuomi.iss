@@ -35,9 +35,11 @@ OutputBaseFilename=Nuomi-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+; 安装器 / 卸载器 / 快捷方式统一用 Nuomi 麻糬图标
+SetupIconFile=..\nuomi.ico
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#MyAppName}
-UninstallDisplayIcon={app}\nuomi.exe
+UninstallDisplayIcon={app}\nuomi.ico
 
 [Languages]
 Name: "cn"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
@@ -46,14 +48,16 @@ Name: "en"; MessagesFile: "compiler:Default.isl"
 [Files]
 Source: "..\dist\windows\nuomi.exe";   DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\windows\nucutil.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\nuomi.ico";                DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md";  DestDir: "{app}"; Flags: ignoreversion isreadme
 Source: "..\LICENSE";    DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\Nuomi 命令行.lnk"; Filename: "{app}\nuomi.exe"; \
-      Comment: "运行 Nuomi 脚本（nuomi xxx.nuomi）"
+Name: "{group}\Nuomi 命令行"; Filename: "{app}\nuomi.exe"; \
+      IconFilename: "{app}\nuomi.ico"; Comment: "运行 Nuomi 脚本（nuomi xxx.nuomi）"
 Name: "{group}\Nuomi 官网"; Filename: "{#MyAppURL}"
-Name: "{autodesktop}\Nuomi.lnk"; Filename: "{app}\nuomi.exe"; Tasks: desktopicon
+Name: "{autodesktop}\Nuomi"; Filename: "{app}\nuomi.exe"; \
+      IconFilename: "{app}\nuomi.ico"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "额外选项："

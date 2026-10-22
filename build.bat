@@ -25,5 +25,14 @@ rem nucutil: needs kernel32 for VirtualAlloc; -lkernel32 harmless for MinGW/clan
 "%CC%" -O2 -Iinclude -lkernel32 src\nucfmt.c src\nucutil.c -o nucutil.exe
 if errorlevel 1 (echo [build] nucutil FAILED & exit /b 1)
 
+rem Embed the Nuomi mochi icon into the exe (TCC can't do this natively).
+rem Falls back silently if python isn't available so the build still succeeds.
+where python >nul 2>nul && python tools\embed-icon.py nuomi.exe nuomi.ico >nul 2>nul && (
+  echo [build] icon embedded into nuomi.exe
+  if not exist dist\windows mkdir dist\windows
+  copy /Y nuomi.exe dist\windows\nuomi.exe >nul
+  echo [build] synced dist\windows\nuomi.exe
+) || echo [build] (skipped icon embed: python not found)
+
 echo [build] OK: nuomi.exe , nucutil.exe
 endlocal
