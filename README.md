@@ -39,6 +39,18 @@ nuomi update --check   # 只检查、不下载
 - 当前进程仍是旧版本，**重启 nuomi 后生效**。
 - 开发 / 自托管：`nuomi update --url <api地址>` 可指向自定义更新源；`nuomi update --exe <路径>` 可指定更新目标（测试用）。
 
+#### 📦 通过 npm 安装（需先装 Node.js）
+
+如果你装了 Node.js，可以直接用 npm 装——装完命令行里 `nuomi` 全局可用，也支持 `npx nuomi-ryan` 临时跑（不安装直接用）：
+
+```bash
+npm install -g nuomi-ryan   # 装完敲 nuomi 即用
+npx nuomi-ryan              # 不安装、临时跑
+```
+
+> 包名是 `nuomi-ryan`（npm 上 `nuomi` 已被占用），但装完敲的命令**仍是 `nuomi`**。仅支持 Windows x64。
+> 发布包位于仓库 [`npm/`](npm/) 目录，发布前由 `prepublishOnly` 自动把最新编译的 `nuomi.exe` 同步进去。
+
 #### 📦 一键安装（推荐）：装完 cmd 里直接打 `nuomi`
 
 下载 **[`Nuomi-Setup.exe`](installer/out/Nuomi-Setup.exe)** → 双击 → 一路下一步即可。

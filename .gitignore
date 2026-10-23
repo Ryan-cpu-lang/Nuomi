@@ -1,5 +1,8 @@
 # ===== 构建产物 =====
 *.exe
+# 例外：npm 发布包（npm/）必需的预编译二进制，须入库，否则 clone 后无法 publish
+!npm/bin/nuomi.exe
+!npm/bin/nucutil.exe
 *.o
 *.obj
 nuomi_dbg.exe

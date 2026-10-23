@@ -1,0 +1,44 @@
+{
+  "name": "nuomi-ryan",
+  "version": "0.3.0",
+  "description": "Nuomi 语言解释器 —— 极简类 Lisp 脚本语言，Windows 命令行即用，支持 nuomi update 自更新",
+  "keywords": [
+    "nuomi",
+    "language",
+    "interpreter",
+    "scripting",
+    "lisp",
+    "repl"
+  ],
+  "homepage": "https://github.com/Ryan-cpu-lang/Nuomi#readme",
+  "bugs": {
+    "url": "https://github.com/Ryan-cpu-lang/Nuomi/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ryan-cpu-lang/Nuomi.git"
+  },
+  "author": "Ryan-cpu-lang",
+  "license": "GPL-2.0",
+  "bin": {
+    "nuomi": "./bin/nuomi.exe"
+  },
+  "files": [
+    "bin/nuomi.exe",
+    "bin/nucutil.exe",
+    "README.md",
+    "sync-bin.js"
+  ],
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "engines": {
+    "node": ">=14"
+  },
+  "scripts": {
+    "prepublishOnly": "node sync-bin.js"
+  }
+}
