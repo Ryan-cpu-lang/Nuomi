@@ -1,3 +1,0 @@
-(define a 6)
-(define b 7)
-(+ (* a b) 100)
