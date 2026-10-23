@@ -67,7 +67,7 @@ void repl(Env* global) {
     char* buf = NULL;
     size_t buflen = 0, bufcaps = 0;
     char line[8192];
-    printf("Nuomi 0.1 — 输入表达式回车求值，Ctrl+Z 回车 或 Ctrl+C 退出\n");
+    printf("Nuomi %s — 输入表达式回车求值，Ctrl+Z 回车 或 Ctrl+C 退出\n", NUOMI_VERSION);
     for (;;) {
         printf("nuomi> ");
         fflush(stdout);
@@ -193,6 +193,21 @@ int nuomiRealMain(int argc, char** argv) {
 
 static int nuomiRealMainInner(int argc, char** argv) {
     setup_console_utf8();   /* Windows: 控制台按 UTF-8 输出，修复 REPL 中文标语乱码 */
+
+    /* 顶层子命令：version / update —— 不进 REPL、不读脚本，提前返回。
+       （放在 newEnv 之前：这两条命令都不需要解释器环境。） */
+    if (argc >= 2) {
+        if (strcmp(argv[1], "version") == 0 ||
+            strcmp(argv[1], "--version") == 0 ||
+            strcmp(argv[1], "-v") == 0) {
+            nuomi_print_version();
+            return 0;
+        }
+        if (strcmp(argv[1], "update") == 0) {
+            return nuomi_update(argc - 1, argv + 1);
+        }
+    }
+
     Env* global = newEnv(NULL);
     registerNatives(global);
 

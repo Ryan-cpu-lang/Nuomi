@@ -11,7 +11,7 @@ Nuomi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从�
 
 ## 📥 下载（Windows / Novus / Linux）
 
-> 当前版本：**Route-A M3** —— 解释器全功能；编译器支持 整数 / 函数(递归) / 局部变量 / if·while / 比较 / **let·let\*·letrec** / **字符串字面量** → `.nuc`
+> 当前版本：**v0.3.0**（Route-A M3 里程碑）—— 解释器全功能；编译器支持 整数 / 函数(递归) / 局部变量 / if·while / 比较 / **let·let\*·letrec** / **字符串字面量** → `.nuc`
 
 ### 🪟 Windows
 
@@ -20,9 +20,24 @@ Nuomi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从�
 3. 双击 **`run-guess.bat`** 玩猜数字、**`run-games.bat`** 看游戏合集
 4. （可选）双击 **`make-shortcuts.bat`** 生成带 Nuomi 图标的快捷方式
 
-💾 **不想自己编译？**直接下载预编译版（Windows x64）：**[`nuomi.exe`](https://github.com/Ryan-cpu-lang/Nuomi/releases/download/v0.2.0-m2/nuomi.exe)** · [`nucutil.exe`](https://github.com/Ryan-cpu-lang/Nuomi/releases/download/v0.2.0-m2/nucutil.exe)（来自 [Release v0.2.0-m2](https://github.com/Ryan-cpu-lang/Nuomi/releases/tag/v0.2.0-m2)）
+💾 **不想自己编译？**直接下载预编译版（Windows x64）：**[`nuomi.exe`](https://github.com/Ryan-cpu-lang/Nuomi/releases/download/v0.3.0/nuomi.exe)** · [`nucutil.exe`](https://github.com/Ryan-cpu-lang/Nuomi/releases/download/v0.3.0/nucutil.exe)（来自 [Release v0.3.0](https://github.com/Ryan-cpu-lang/Nuomi/releases/tag/v0.3.0)）
 
 > 完整版本历史与各平台预编译包见 [**Releases**](https://github.com/Ryan-cpu-lang/Nuomi/releases) 页面。
+
+### 🔄 更新 Nuomi
+
+装好之后，一条命令就能把自己升级到 GitHub 上的最新 release（自更新，无需重下安装包）：
+
+```bat
+nuomi version          # 显示当前版本
+nuomi update           # 检查 GitHub latest release，有新版本就下载并替换自己
+nuomi update --check   # 只检查、不下载
+```
+
+- `nuomi update` 会查 [Releases](https://github.com/Ryan-cpu-lang/Nuomi/releases) 里最新的 `nuomi.exe`（以及同目录的 `nucutil.exe`），下载后用「重命名备份 + 改名替换」的方式就地替换**正在运行的这份 exe**——Windows 下不能直接删除运行中的 exe，但重命名可以，所以这套做法安全，失败会自动回滚。
+- 替换的是**当前正在运行的 nuomi.exe**（自动用 `GetModuleFileName` 定位自身），因此无论你是安装版（`%LOCALAPPDATA%\Programs\Nuomi`）还是便携版，跑 `nuomi update` 都更新对应的那份。
+- 当前进程仍是旧版本，**重启 nuomi 后生效**。
+- 开发 / 自托管：`nuomi update --url <api地址>` 可指向自定义更新源；`nuomi update --exe <路径>` 可指定更新目标（测试用）。
 
 #### 📦 一键安装（推荐）：装完 cmd 里直接打 `nuomi`
 

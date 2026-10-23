@@ -11,7 +11,7 @@ NUC_LIB  := src/nucfmt.c
 # codegen.c 属于语言二进制（而非 nucutil）：它与 reader 配合解析，并由 main 的
 # -c 编译模式调用，因此必须与 nucfmt.c 一起链接进 nuomi（漏掉则链接失败）。
 LANG_SRC := src/value.c src/reader.c src/env.c src/eval.c src/native.c \
-            src/codegen.c src/main.c
+            src/codegen.c src/update.c src/main.c
 NUC_SRC  := src/nucutil.c
 SAMPLES  := $(wildcard samples/*.nuomi)
 

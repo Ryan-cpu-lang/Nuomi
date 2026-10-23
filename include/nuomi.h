@@ -14,6 +14,25 @@
 #include <math.h>
 #include <setjmp.h>
 
+/* ====================== 版本号 ======================
+ * 与最新 git tag 对齐（见 `git tag`）。改版本时记得同步 README.md 顶部
+ * 的「当前版本」与下载链接 tag，以及本文件。Nuomi 0.x 阶段迭代快，
+ * 统一来源能避免 REPL 标语 / User-Agent / 更新检查各说各话。
+ * 更新模块（src/update.c）拿它和 GitHub latest release 的 tag 比对。 */
+#ifndef NUOMI_VERSION
+#define NUOMI_VERSION "0.3.0"
+#endif
+
+/* HTTP 辅助接口（落地于 src/http.c，供更新模块复用 WinINet 实现） */
+bool nuomi_http_get_memory(const char* url, unsigned char** out, size_t* len,
+                           char* err, size_t errcap);
+bool nuomi_http_download_to_file(const char* url, const char* dest,
+                                 char* err, size_t errcap);
+
+/* ====================== 更新模块（落地于 src/update.c） ====================== */
+void nuomi_print_version(void);
+int  nuomi_update(int argc, char** argv);
+
 /* ====================== 值 (Value) ====================== */
 
 typedef enum { VAL_NIL, VAL_BOOL, VAL_NUMBER, VAL_OBJ } ValueType;

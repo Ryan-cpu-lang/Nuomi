@@ -178,7 +178,7 @@ static bool http_advanced(const char* url, const char* ua, const char* verb,
     const char* path = NULL;
     if (!parse_url(url, &https, host, sizeof host, &port, &path)) return false;
 
-    const char* agent = (ua && *ua) ? ua : "Nuomi/0.1 (nuomi-lang)";
+    const char* agent = (ua && *ua) ? ua : "Nuomi/" NUOMI_VERSION " (nuomi-lang)";
     /* ⚠️ 绝不能加 INET_FLAG_RELOAD：本机实测带它 WinINet 会在这一步挂死
        （无 RELOAD 时同一调用完全正常）。它本意是"绕过缓存重取"，
        对启动器场景没必要，去掉更稳。 */
@@ -244,7 +244,7 @@ static bool http_simple(const char* url, const char* ua, const char* headers,
                         bool wantBody, HttpResp* out) {
     const HttpApi* A = api_get();
     if (!A || !A->OpenUrl) return false;
-    const char* agent = (ua && *ua) ? ua : "Nuomi/0.1 (nuomi-lang)";
+    const char* agent = (ua && *ua) ? ua : "Nuomi/" NUOMI_VERSION " (nuomi-lang)";
     void* hNet = A->Open(agent, INET_OPEN_DIRECT, NULL, NULL, 0);
     if (!hNet) return false;
     DWORD tmo = 30000;
@@ -464,6 +464,46 @@ static Value natHttpDownloadFrom(int c, Value* a, Env* e) {
     return NUM_VAL((double)(wrote == total ? (long long)total : -1));
 }
 
+/* ---------- 给更新模块（src/update.c）用的纯 C 下载封装（复用 http_request） ---------- */
+
+/* 把 HTTP 响应体取到内存。成功返回 true，*out 为 malloc 的 buffer（调用方 free）、
+   *len 为长度；失败返回 false，err 写入错误信息。 */
+bool nuomi_http_get_memory(const char* url, unsigned char** out, size_t* len,
+                           char* err, size_t errcap) {
+    HttpResp r;
+    if (!http_request(url, "Nuomi/" NUOMI_VERSION " (nuomi-update)", "GET", -1, true, &r)) {
+        if (err) snprintf(err, errcap, "request failed: %s", url);
+        return false;
+    }
+    if (r.status != 0 && (r.status < 200 || r.status >= 300)) {
+        if (err) snprintf(err, errcap, "HTTP %d: %s", r.status, url);
+        resp_free(&r);
+        return false;
+    }
+    *out = r.body;      /* 转移所有权，调用方负责 free（含失败时） */
+    *len = r.bodyLen;
+    return true;
+}
+
+/* 下载到文件（落盘）。成功返回 true，失败返回 false。 */
+bool nuomi_http_download_to_file(const char* url, const char* dest,
+                                 char* err, size_t errcap) {
+    unsigned char* buf = NULL; size_t n = 0;
+    if (!nuomi_http_get_memory(url, &buf, &n, err, errcap)) return false;
+    FILE* f = fopen(dest, "wb");
+    if (!f) {
+        if (err) snprintf(err, errcap, "cannot open for write: %s", dest);
+        free(buf);
+        return false;
+    }
+    size_t wrote = n ? fwrite(buf, 1, n, f) : 0;
+    fclose(f);
+    free(buf);
+    bool ok = (wrote == n);
+    if (!ok && err) snprintf(err, errcap, "write incomplete: %s", dest);
+    return ok;
+}
+
 #else  /* ---- 非 Windows：暂未实现（将来接 novus 网络 syscall） ---- */
 static Value natHttpGet(int c, Value* a, Env* e) {
     (void)c; (void)a; (void)e;
@@ -489,6 +529,18 @@ static Value natHttpDownloadFrom(int c, Value* a, Env* e) {
     (void)c; (void)a; (void)e;
     runtimeError("http-download-from: not implemented on this platform yet");
     return NUM_VAL(-1);
+}
+
+/* 非 Windows：更新模块依赖的下载封装也不可用（将来接 novus 网络 syscall） */
+bool nuomi_http_get_memory(const char* url, unsigned char** out, size_t* len, char* err, size_t errcap) {
+    (void)url; (void)out; (void)len; (void)err; (void)errcap;
+    if (err) snprintf(err, errcap, "HTTP not implemented on this platform yet");
+    return false;
+}
+bool nuomi_http_download_to_file(const char* url, const char* dest, char* err, size_t errcap) {
+    (void)url; (void)dest; (void)err; (void)errcap;
+    if (err) snprintf(err, errcap, "HTTP not implemented on this platform yet");
+    return false;
 }
 #endif
 
