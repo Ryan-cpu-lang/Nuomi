@@ -16,11 +16,11 @@ Nuomi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从�
 ### 🪟 Windows
 
 1. 下载本仓库（Code → Download ZIP，或 `git clone`）
-2. 双击 **`build.bat`**（自动探测 clang / gcc / 绿色版 TCC）→ 得到 `nuomi.exe` + `nucutil.exe`
+2. 双击 **`build.bat`**（自动探测 clang / gcc / 绿色版 TCC）→ 得到单一 `nuomi.exe`（已内置 NUC 工具链，用 `nuomi nuc` 调用）
 3. 双击 **`run-guess.bat`** 玩猜数字、**`run-games.bat`** 看游戏合集
 4. （可选）双击 **`make-shortcuts.bat`** 生成带 Nuomi 图标的快捷方式
 
-💾 **不想自己编译？**直接下载预编译版（Windows x64）：**[`nuomi.exe`](https://github.com/Ryan-cpu-lang/Nuomi/releases/download/v0.3.0/nuomi.exe)** · [`nucutil.exe`](https://github.com/Ryan-cpu-lang/Nuomi/releases/download/v0.3.0/nucutil.exe)（来自 [Release v0.3.0](https://github.com/Ryan-cpu-lang/Nuomi/releases/tag/v0.3.0)）
+💾 **不想自己编译？**直接下载预编译版（Windows x64，单一文件）：**[`nuomi.exe`](https://github.com/Ryan-cpu-lang/Nuomi/releases/download/v0.3.0/nuomi.exe)（来自 [Release v0.3.0](https://github.com/Ryan-cpu-lang/Nuomi/releases/tag/v0.3.0)）—— 解释器、编译后端、NUC 工具链都在这一个 exe 里，用 `nuomi nuc` 调用 NUC 命令。
 
 > 完整版本历史与各平台预编译包见 [**Releases**](https://github.com/Ryan-cpu-lang/Nuomi/releases) 页面。
 
@@ -34,7 +34,7 @@ nuomi update           # 检查 GitHub latest release，有新版本就下载并
 nuomi update --check   # 只检查、不下载
 ```
 
-- `nuomi update` 会查 [Releases](https://github.com/Ryan-cpu-lang/Nuomi/releases) 里最新的 `nuomi.exe`（以及同目录的 `nucutil.exe`），下载后用「重命名备份 + 改名替换」的方式就地替换**正在运行的这份 exe**——Windows 下不能直接删除运行中的 exe，但重命名可以，所以这套做法安全，失败会自动回滚。
+- `nuomi update` 会查 [Releases](https://github.com/Ryan-cpu-lang/Nuomi/releases) 里最新的 `nuomi.exe`（单一文件，已含全部功能），下载后用「重命名备份 + 改名替换」的方式就地替换**正在运行的这份 exe**——Windows 下不能直接删除运行中的 exe，但重命名可以，所以这套做法安全，失败会自动回滚。
 - 替换的是**当前正在运行的 nuomi.exe**（自动用 `GetModuleFileName` 定位自身），因此无论你是安装版（`%LOCALAPPDATA%\Programs\Nuomi`）还是便携版，跑 `nuomi update` 都更新对应的那份。
 - 当前进程仍是旧版本，**重启 nuomi 后生效**。
 - 开发 / 自托管：`nuomi update --url <api地址>` 可指向自定义更新源；`nuomi update --exe <路径>` 可指定更新目标（测试用）。
@@ -91,7 +91,7 @@ npx nuomi-ryan              # 不安装、临时跑
 
 ```bash
 git clone https://github.com/Ryan-cpu-lang/nuomi.git && cd nuomi
-make          # 需要 gcc + make，产出 nuomi 与 nucutil
+make          # 需要 gcc + make，产出单一 nuomi（已含 NUC 工具链）
 make test     # 冒烟：全部样例 + NUC 流水线
 ```
 （或 `./test-linux.sh` 一键）
@@ -114,7 +114,7 @@ make test     # 冒烟：全部样例 + NUC 流水线
 │   ├── main.c           # REPL / 脚本执行 / -c 编译模式
 │   ├── codegen.c        # Route-A 编译后端（Nuomi 子集 → x86_64 → .nuc）
 │   ├── nucfmt.c         # NUC 格式：构建 / 解析 / 校验 / dump
-│   └── nucutil.c        # NUC 命令行工具（emit/validate/dump/run）
+│   └── nucutil.c        # NUC 工具链（已并入 nuomi.exe，用 `nuomi nuc` 调用：emit/validate/dump/run）
 ├── samples/             # Nuomi 示例程序（.nuomi，可解释运行）
 ├── dist/novus/          # 预编译示例 .nuc（诺维斯渠道）+ 源码
 ├── tools/               # gen-icon.py / make-shortcuts.ps1
@@ -133,7 +133,7 @@ make test     # 冒烟：全部样例 + NUC 流水线
 
 ```bash
 # Linux / macOS / 有 make 的环境
-make            # 产出 nuomi 与 nucutil
+make            # 产出单一 nuomi（已含 NUC 工具链）
 
 # Windows（没有 make 也行）
 build.bat       # 自动找 clang，找不到再用 gcc
@@ -242,9 +242,9 @@ nuomi> (sq 9)
 
 完整示例见 `samples/stdlib.nuomi`（标准库）与 `samples/scope.nuomi`（作用域/闭包）。
 
-## 4. NUC 工具链（`nucutil`）
+## 4. NUC 工具链（`nuomi nuc`）
 
-NUC 是 novus-os 的原生可执行格式（魔数 `NUC!`，x86_64）。布局铁律：
+NUC 是 novus-os 的原生可执行格式（魔数 `NUC!`，x86_64）。NUC 工具链已并入 `nuomi.exe`，通过 `nuomi nuc` 子命令调用（不再有独立的 `nucutil` 可执行文件）。布局铁律：
 
 ```
 Header(48) → SegmentTable → SymbolTable → RelocationTable → StringTable → 段数据(4KiB 页对齐)
@@ -262,23 +262,23 @@ Header(48) → SegmentTable → SymbolTable → RelocationTable → StringTable 
 命令：
 ```bash
 # 生成一个带 PC32 重定位、可在真机跑通的最小示例 .nuc
-./nucutil emit-demo demo.nuc
+nuomi nuc emit-demo demo.nuc
 
 # 校验（按 §10 ABI 规则：magic / abi 主版本=1 / 64 位 / 段权限 W^X 等）
-./nucutil validate demo.nuc
+nuomi nuc validate demo.nuc
 
 # 人类可读 dump（头/段表/符号表/重定位表/entry_rip）
-./nucutil dump demo.nuc
+nuomi nuc dump demo.nuc
 
 # （仅 Windows x86_64）把 TEXT 段映射到 RWX 并执行入口，验证整条加载链路
-./nucutil run demo.nuc        # 应输出：entry returned: 42 (0x2A)
+nuomi nuc run demo.nuc        # 应输出：entry returned: 42 (0x2A)
 ```
 
 `emit-demo` 产出的 `demo.nuc`：`.text` 里 `call main` 用 `R_X86_64_PC32` 重定位，加载器解析后跳到 `main`（`mov eax,0x2A; ret`），所以执行返回 42——这同时验证了 **格式生成 → 重定位 → 真机执行** 全链路。
 
 ## 5. 下一步：让 Nuomi 真正产出 NUC 运行在 novus-os
 
-目前 Nuomi 是**解释执行**（在宿主上直接跑源码），`nucutil` 负责 **NUC 格式本身**。
+目前 Nuomi 是**解释执行**（在宿主上直接跑源码），NUC 格式本身由 `nuomi nuc` 工具链负责。
 要让 Nuomi 程序作为 `.nuc` 在 novus-os 上跑，需要做编译后端，两条路线：
 
 - **路线 A（原生代码生成）**：把 Nuomi 直接编译成 x86_64 机器码塞进 `.text`，对齐你们 `cppcc` 的 syscall ABI。最贴近原生、性能最好，但工作量最大（寄存器分配、指令选择、系统调用）。

@@ -13,9 +13,9 @@
 ## 校验（宿主机上）
 
 ```bash
-nucutil validate demo.nuc   # -> [0] valid NUC V1.0
-nucutil dump    demo.nuc    # 查看段表 / 符号表 / 重定位表 / entry_rip
-nucutil run     demo.nuc    # 宿主加载执行，打印入口返回值
+nuomi nuc validate demo.nuc   # -> [0] valid NUC V1.0
+nuomi nuc dump    demo.nuc    # 查看段表 / 符号表 / 重定位表 / entry_rip
+nuomi nuc run     demo.nuc    # 宿主加载执行，打印入口返回值
 ```
 
 ## 重新编译

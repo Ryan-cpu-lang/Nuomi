@@ -566,12 +566,12 @@ quote  if  while  define  set!  lambda  begin  and  or
 
 - **运行**：`nuomi 文件.nuomi` 执行脚本；无参进入 REPL。
 - **编译（Route-A M2）**：`nuomi -c 文件.nuomi -o 输出.nuc` 支持 **整数运算 + 函数(可递归) + 局部变量 + if/while/begin + 比较** 的 x86_64 原生码（System V 调用约定；跨函数调用经 `R_X86_64_PC32` 重定位 + FUNC 符号表 §5/§7，由加载器装载期解析）。限制：无 字符串/向量/内置 I/O（novus 系统调用号表公布后以 `(syscall n ...)` 接入）；编译期布尔为 1/0；顶层 `define` 为编译期常量（不可 `set!`）；每函数 ≤6 参数、≤32 个局部槽。
-- NUC 工具链 `nucutil`（`emit-demo` / `validate` / `dump` / `run`）跨 Windows/Linux/macOS。
+- NUC 工具链（`nuomi nuc`：`emit-demo` / `validate` / `dump` / `run`）跨 Windows/Linux/macOS，已并入 `nuomi.exe` 单一文件。
 
 > 环境对齐示例（Linux + gcc）：
 > ```bash
-> make            # 生成 ./nuomi 与 ./nucutil
-> make test       # 冒烟：跑全部样例 + emit-demo/validate/run
+> make            # 生成单一 ./nuomi（已含 NUC 工具链）
+> make test       # 冒烟：跑全部样例 + nuomi nuc emit-demo/validate/run
 > ```
 
 ---

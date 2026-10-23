@@ -10,7 +10,7 @@
 ; ============================================================================
 
 #define MyAppName      "Nuomi"
-#define MyAppVersion   "0.1.0"
+#define MyAppVersion   "0.3.0"
 #define MyAppPublisher "Nuomi Lang"
 #define MyAppURL       "https://github.com/Ryan-cpu-lang/Nuomi"
 
@@ -47,7 +47,6 @@ Name: "en"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 Source: "..\dist\windows\nuomi.exe";   DestDir: "{app}"; Flags: ignoreversion
-Source: "..\dist\windows\nucutil.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\nuomi.ico";                DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md";  DestDir: "{app}"; Flags: ignoreversion isreadme
 Source: "..\LICENSE";    DestDir: "{app}"; Flags: ignoreversion

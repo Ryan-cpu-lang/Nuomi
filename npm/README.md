@@ -17,6 +17,10 @@ nuomi            # 进入交互式 REPL
 nuomi game.nuomi # 运行一个 .nuomi 脚本
 nuomi version    # 查看当前版本
 nuomi update     # 一键升级到 GitHub 最新版
+nuomi nuc dump demo.nuc        # NUC 工具链：查看 .nuc 段表/符号表/重定位
+nuomi nuc validate demo.nuc    # 校验 NUC 文件是否符合 ABI
+nuomi nuc emit-demo demo.nuc   # 生成一个可跑的最小示例 .nuc
+nuomi nuc run demo.nuc         # 在宿主上加载并执行 .nuc（应返回 42）
 ```
 
 也可以**不安装、临时跑**（适合想先试一试）：
@@ -24,6 +28,10 @@ nuomi update     # 一键升级到 GitHub 最新版
 ```bash
 npx nuomi-ryan
 ```
+
+## 单文件分发包
+
+本包只包含一个 `bin/nuomi.exe`，即**单一可执行文件**：解释器、`-c` 编译后端、NUC 工具链（`nuomi nuc` 子命令）全部静态链接进同一个文件，不依赖任何外部运行库（仅使用 Windows 系统自带的 `kernel32` / `msvcrt`）。
 
 ## 平台支持
 

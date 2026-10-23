@@ -217,9 +217,7 @@ int nuomi_update(int argc, char** argv) {
 
     char* tag = extract_tag((const char*)json, jlen);
     char* assets[8]; int nassets = 0;
-    char* nucAssets[8]; int nNuc = 0;
     collect_asset((const char*)json, jlen, "nuomi.exe", assets, 8, &nassets);
-    collect_asset((const char*)json, jlen, "nucutil.exe", nucAssets, 8, &nNuc);
 
     if (!tag) {
         fprintf(stderr, "无法从更新源解析出版本号。\n");
@@ -267,32 +265,11 @@ int nuomi_update(int argc, char** argv) {
     }
     printf("nuomi 已更新到 %s。\n", tag);
 
-    /* 3) 更新 nucutil.exe（若本机同目录存在，且远程提供） */
-    if (nNuc > 0) {
-        char nucPath[1100];
-        snprintf(nucPath, sizeof nucPath, "%snucutil.exe", dir);
-        if (file_exists(nucPath)) {
-            char nucNew[1100], nucOld[1100];
-            snprintf(nucNew, sizeof nucNew, "%s.new", nucPath);
-            snprintf(nucOld, sizeof nucOld, "%s.old", nucPath);
-            printf("正在下载 nucutil.exe ...\n");
-            if (nuomi_http_download_to_file(nucAssets[0], nucNew, err, sizeof err)) {
-                if (self_replace(nucPath, nucNew, nucOld, err, sizeof err))
-                    printf("nucutil 已更新。\n");
-                else
-                    fprintf(stderr, "nucutil 更新失败（nuomi 已更新）：%s\n", err);
-            } else {
-                fprintf(stderr, "nucutil 下载失败（nuomi 已更新）：%s\n", err);
-            }
-        }
-    }
-
     printf("更新完成。当前进程仍是旧版本，请重新启动 nuomi 使更改生效。\n");
 
 cleanup:
     free(json);
     free(tag);
     for (int i = 0; i < nassets; i++) free(assets[i]);
-    for (int i = 0; i < nNuc; i++) free(nucAssets[i]);
     return rc;
 }

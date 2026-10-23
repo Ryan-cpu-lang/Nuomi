@@ -21,6 +21,10 @@ static void setup_console_utf8(void) {
 static void setup_console_utf8(void) { }
 #endif
 
+/* 由 src/nucutil.c 提供：NUC 工具链子命令（dump/validate/emit-demo/run）。
+ * 调用约定见 nucutil.c 顶部注释。 */
+int nuomi_nuc_main(int argc, char** argv);
+
 void runFile(const char* path, Env* global) {
     FILE* f = fopen(path, "rb");
     if (!f) { fprintf(stderr, "cannot open %s\n", path); exit(1); }
@@ -147,10 +151,8 @@ static int runOnBigStack(int argc, char** argv) {
     HANDLE h = CreateThread(NULL, NUOMI_STACK_BYTES, nuomiThreadProc, &ma, 0, NULL);
     if (!h) return nuomiRealMain(argc, argv);   /* 建线程失败就退回主线程 */
     WaitForSingleObject(h, INFINITE);
-    DWORD rc = 0;
-    GetExitCodeThread(h, &rc);
     CloseHandle(h);
-    return (int)rc;
+    return ma.rc;                 /* 返回解释器实际返回码（线程过程自身返回值恒为 0，不可取） */
 }
 #else
 #include <pthread.h>
@@ -205,6 +207,10 @@ static int nuomiRealMainInner(int argc, char** argv) {
         }
         if (strcmp(argv[1], "update") == 0) {
             return nuomi_update(argc - 1, argv + 1);
+        }
+        /* NUC 工具链子命令：nuomi nuc <dump|validate|emit-demo|run> <file> */
+        if (strcmp(argv[1], "nuc") == 0) {
+            return nuomi_nuc_main(argc - 1, argv + 1);
         }
     }
 

@@ -10,7 +10,6 @@ fs.mkdirSync(binDir, { recursive: true });
 
 const pairs = [
   ['dist/windows/nuomi.exe', 'nuomi.exe'],
-  ['nucutil.exe', 'nucutil.exe'],
 ];
 
 let ok = true;

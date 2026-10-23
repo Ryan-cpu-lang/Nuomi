@@ -276,9 +276,12 @@ static int run_nuc(const char* path) {
 }
 #endif
 
-int main(int argc, char** argv) {
+/* 作为 nuomi.exe 的子命令入口：nuomi nuc <dump|validate|emit-demo|run> <file>
+ * 调用约定：main.c 传 (argc-1, argv+1)，故 argv[0] 为占位 "nuc"，
+ * 真正的子命令在 argv[1]、文件在 argv[2]，必须 argc>=3 才有文件参数。 */
+int nuomi_nuc_main(int argc, char** argv) {
     if (argc < 3) {
-        fprintf(stderr, "usage: nucutil <dump|validate|emit-demo|run> <file>\n");
+        fprintf(stderr, "usage: nuomi nuc <dump|validate|emit-demo|run> <file>\n");
         return 1;
     }
     if (strcmp(argv[1], "dump") == 0) {

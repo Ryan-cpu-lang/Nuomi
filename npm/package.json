@@ -25,7 +25,6 @@
   },
   "files": [
     "bin/nuomi.exe",
-    "bin/nucutil.exe",
     "README.md",
     "sync-bin.js"
   ],
