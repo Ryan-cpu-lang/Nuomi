@@ -21,7 +21,7 @@ rem nuomi: single exe = interpreter + -c codegen (codegen.c) + NUC read/write (n
 rem + NUC toolchain (nucutil.c, provides "nuomi nuc" subcommand), all linked in.
 rem -lkernel32: main.c sets console to UTF-8 on Windows via SetConsoleOutputCP and SetConsoleCP
 rem   nucutil.c run also uses VirtualAlloc, so kernel32 is required too.
-"%CC%" -O2 -Iinclude -lkernel32 src\value.c src\reader.c src\env.c src\eval.c src\native.c src\json.c src\http.c src\proc.c src\wm.c src\codegen.c src\nucfmt.c src\update.c src\nucutil.c src\main.c -o nuomi.exe
+"%CC%" -O2 -Iinclude -lkernel32 -luser32 -lgdi32 src\value.c src\reader.c src\env.c src\eval.c src\native.c src\json.c src\http.c src\proc.c src\wm.c src\codegen.c src\nucfmt.c src\update.c src\nucutil.c src\main.c -o nuomi.exe
 if errorlevel 1 (echo [build] nuomi FAILED & exit /b 1)
 
 rem Embed the Nuomi mochi icon into the exe (TCC can't do this natively).
