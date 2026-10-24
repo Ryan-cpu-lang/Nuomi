@@ -230,6 +230,7 @@ static Value w32Text(int c, Value* a, Env* e) {
     cmd.tx = IS_NUM(a[1])?(int)AS_NUM(a[1]):0;
     cmd.ty = IS_NUM(a[2])?(int)AS_NUM(a[2]):0;
     cmd.scale = IS_NUM(a[3])?(int)AS_NUM(a[3]):1;
+    cmd.color = (c >= 6 && IS_NUM(a[5])) ? (uint32_t)AS_NUM(a[5]) : 0xFFFFFFu; /* 第6参颜色，默认白 */
     strncpy(cmd.text, s, sizeof cmd.text - 1);
     free(s);
     w32_dl_push(W, cmd);

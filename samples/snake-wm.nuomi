@@ -16,14 +16,18 @@
 (define WINW (* FW CELL))
 (define WINH (+ TOP (* FH CELL)))
 
-;; 颜色（十进制 = 0xRRGGBB）
-(define C_BG 1052688)      ;; 0x101010
-(define C_BAR 2105376)     ;; 0x202020
-(define C_BORDER 6316128)  ;; 0x606060
-(define C_HEAD 65280)      ;; 0x00FF00 蛇头
-(define C_BODY 52224)      ;; 0x00CC00 蛇身
-(define C_FOOD 16711680)   ;; 0xFF0000 食物
-(define C_TEXT 16777215)   ;; 0xFFFFFF
+;; 颜色（十进制 = 0xRRGGBB；Nuomi 不支持 0x 字面量，故用十进制）
+(define C_BG 14808574)     ;; 0xE1F5FE 浅蓝底
+(define C_BG2 11789820)    ;; 0xB3E5FC 棋盘格
+(define C_BAR 6953882)     ;; 0x6A1B9A 紫信息条
+(define C_BORDER 33679)    ;; 0x00838F 青边框
+(define C_HEAD 16011550)   ;; 0xF4511E 深橙蛇头
+(define C_FOOD 16717636)   ;; 0xFF1744 亮红食物
+(define C_TEXT 16777215)   ;; 0xFFFFFF 信息条白字
+(define C_TEXT2 3622735)   ;; 0x37474F 深灰蓝（备用）
+;; 蛇身彩虹七色
+(define RAINBOW [16727296 16748800 16771584 58998 45311 5467646 13959417])
+(define (seg-color i) (get RAINBOW (% i 7)))
 
 ;; ---------- 全局状态 ----------
 (define snake '())
@@ -72,16 +76,26 @@
 (define (draw-cell gx gy color)
   (fill-rect (* gx CELL) (+ TOP (* gy CELL)) CELL CELL color))
 (define (draw-snake)
-  (define cur snake) (define first true)
+  (define cur snake) (define idx 0)
   (while (not (null? cur))
-    (draw-cell (get (car cur) 0) (get (car cur) 1) (if first C_HEAD C_BODY))
-    (set! first false)
+    (draw-cell (get (car cur) 0) (get (car cur) 1) (if (= idx 0) C_HEAD (seg-color idx)))
+    (set! idx (+ idx 1))
     (set! cur (cdr cur))))
+(define (draw-checker)
+  (define gy 0) (define gx 0)
+  (while (< gy FH)
+    (set! gx 0)
+    (while (< gx FW)
+      (if (= (% (+ gx gy) 2) 0) (draw-cell gx gy C_BG2) 0)
+      (set! gx (+ gx 1)))
+    (set! gy (+ gy 1))))
+
 (define (render)
   (window-clear w)
   (fill-rect 0 0 WINW WINH C_BG)
+  (draw-checker)
   (fill-rect 0 0 WINW TOP C_BAR)
-  (window-text w 8 5 1 (str "Score: " score))
+  (window-text w 8 5 1 (str "Score: " score) C_TEXT)
   (window-shape w 2 0 TOP WINW (* FH CELL) C_BORDER)
   (draw-snake)
   (draw-cell (get food 0) (get food 1) C_FOOD)
@@ -123,9 +137,11 @@
 (define (game-over-render)
   (window-clear w)
   (fill-rect 0 0 WINW WINH C_BG)
-  (window-text w 120 100 2 "GAME OVER")
-  (window-text w 96 140 1 (str "Score: " score))
-  (window-text w 40 180 1 "Press R to restart, Esc to quit")
+  (draw-checker)
+  (fill-rect 96 88 192 120 C_BAR)
+  (window-text w 116 96 2 "GAME OVER" C_TEXT)
+  (window-text w 128 146 1 (str "Score: " score) C_TEXT)
+  (window-text w 60 186 1 "Press R restart / Esc quit" C_TEXT)
   (window-invalidate w))
 (define (wait-restart)
   (define k nil)
