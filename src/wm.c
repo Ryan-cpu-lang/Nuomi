@@ -295,10 +295,19 @@ static Value w32_key_sym(int vk) {
         case VK_RETURN: s="enter"; len=5; break;
         default: break;
     }
-    if (!s) return NIL_VAL;
-    ObjString* o = internString(s, len, true);
-    retain(OBJ_VAL(o));
-    return OBJ_VAL(o);
+    if (s) {
+        ObjString* o = internString(s, len, true);
+        retain(OBJ_VAL(o));
+        return OBJ_VAL(o);
+    }
+    /* 字母键 A-Z → 单字符小写字符串（供 key-dir 的 "w"/"a"/"s"/"d" 与 wait-restart 的 "r" 比较） */
+    if (vk >= 'A' && vk <= 'Z') {
+        char ch = (char)('a' + (vk - 'A'));
+        ObjString* o = internString(&ch, 1, false);
+        retain(OBJ_VAL(o));
+        return OBJ_VAL(o);
+    }
+    return NIL_VAL;
 }
 
 /* (window-event [block]) -> 按键符号或 nil；同时泵消息让窗口保持响应 */
