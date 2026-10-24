@@ -11,6 +11,10 @@
  * 复用 src/http.c 的 WinINet 封装（nuomi_http_get_memory /
  * nuomi_http_download_to_file），不引第三方库。
  *
+ * 国内网络直连 api.github.com 常被 GFW 干扰（超时/重置/返回拦截页），导致
+ * 抓不到 tag_name。故查询与下载都走「官方直连 + 国内代理前缀」回退：依次尝试，
+ * 第一个拉通/解析到 tag 的即用。代理随时间可能变动，增删 NUOMI_UPDATE_PROXIES 即可。
+ *
  * 自替换原理（Windows）：正在运行的 exe 可以被「重命名」（MoveFile 同卷重命名
  * 成功），但不能被删除。所以流程是 旧exe -> .old，新下载的 .new -> 旧exe 路径；
  * 任一步失败则把 .old 恢复回去。当前进程仍跑旧内存映像，重启后生效。
@@ -26,6 +30,16 @@
 
 #ifndef DEFAULT_API_URL
 #define DEFAULT_API_URL "https://api.github.com/repos/Ryan-cpu-lang/Nuomi/releases/latest"
+#endif
+
+/* 国内代理前缀回退表：拼在官方 URL 前（ghproxy 系前缀代理）。
+ * 第 1 项为空 = 官方直连；用户用 --url 自定义源时只直连、不套代理。 */
+#ifndef NUOMI_UPDATE_PROXIES
+#define NUOMI_UPDATE_PROXIES \
+    "", \
+    "https://ghproxy.net/", \
+    "https://ghfast.top/", \
+    "https://gh-proxy.com/"
 #endif
 
 /* ---------- 版本解析与比较 ---------- */
@@ -170,12 +184,15 @@ void nuomi_print_version(void) {
 
 int nuomi_update(int argc, char** argv) {
     bool check_only = false;
+    bool custom_url = false;
     const char* api_url = DEFAULT_API_URL;
     const char* exe_override = NULL;
+    /* 官方直连 + 国内代理前缀回退；--url 自定义源时只走直连（不套代理） */
+    static const char* kPrefix[] = { NUOMI_UPDATE_PROXIES, NULL };
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--check") == 0) check_only = true;
-        else if (strcmp(argv[i], "--url") == 0 && i + 1 < argc) api_url = argv[++i];
+        else if (strcmp(argv[i], "--url") == 0 && i + 1 < argc) { api_url = argv[++i]; custom_url = true; }
         else if (strcmp(argv[i], "--exe") == 0 && i + 1 < argc) exe_override = argv[++i];
         else {
             fprintf(stderr, "nuomi update: 未知选项 %s\n", argv[i]);
@@ -207,20 +224,31 @@ int nuomi_update(int argc, char** argv) {
 
     char dir[1024]; dir_of(selfPath, dir, sizeof dir);
 
-    /* 1) 查 latest release */
+    /* 1) 查 latest release：官方直连 + 国内代理前缀回退 */
     unsigned char* json = NULL; size_t jlen = 0; char err[256];
-    printf("正在检查更新（%s）...\n", api_url);
-    if (!nuomi_http_get_memory(api_url, &json, &jlen, err, sizeof err)) {
-        fprintf(stderr, "检查更新失败：%s\n", err);
-        return 1;
-    }
-
-    char* tag = extract_tag((const char*)json, jlen);
+    char* tag = NULL;
+    char urlBuf[1600];
     char* assets[8]; int nassets = 0;
-    collect_asset((const char*)json, jlen, "nuomi.exe", assets, 8, &nassets);
 
+    printf("正在检查更新（%s）...\n", api_url);
+    for (int pi = 0; kPrefix[pi]; pi++) {
+        if (pi > 0 && custom_url) break;                /* 自定义源只直连 */
+        snprintf(urlBuf, sizeof urlBuf, "%s%s", kPrefix[pi], api_url);
+        if (pi > 0) printf("直连失败，改用镜像：%s\n", kPrefix[pi]);
+        if (nuomi_http_get_memory(urlBuf, &json, &jlen, err, sizeof err)) {
+            tag = extract_tag((const char*)json, jlen);
+            if (tag) {
+                collect_asset((const char*)json, jlen, "nuomi.exe", assets, 8, &nassets);
+                break;
+            }
+            free(json); json = NULL; jlen = 0;          /* 拿到内容但无 tag（如拦截页），换下一个源 */
+        } else {
+            fprintf(stderr, "  （%s 拉取失败：%s）\n", kPrefix[pi][0] ? kPrefix[pi] : "官方", err);
+        }
+    }
     if (!tag) {
-        fprintf(stderr, "无法从更新源解析出版本号。\n");
+        fprintf(stderr, "无法从更新源解析出版本号（官方直连与各镜像均失败）。\n");
+        fprintf(stderr, "如在国内，可开 VPN 后重试；或到 Releases 页手动下载 nuomi.exe。\n");
         free(json);
         return 1;
     }
@@ -246,14 +274,21 @@ int nuomi_update(int argc, char** argv) {
         goto cleanup;
     }
 
-    /* 2) 更新 nuomi.exe（自身） */
+    /* 2) 下载 nuomi.exe（自身）：asset 是 github.com 直链，同样走代理前缀回退 */
     const char* nuomi_url = assets[0];
-    char newPath[1100], oldPath[1100];
+    char newPath[1100], oldPath[1100], dlBuf[1600];
     snprintf(newPath, sizeof newPath, "%s.new", selfPath);
     snprintf(oldPath, sizeof oldPath, "%s.old", selfPath);
-    printf("正在下载 nuomi.exe ...\n");
-    if (!nuomi_http_download_to_file(nuomi_url, newPath, err, sizeof err)) {
-        fprintf(stderr, "下载失败：%s\n", err);
+    bool got = false;
+    for (int pi = 0; kPrefix[pi]; pi++) {
+        if (pi > 0 && custom_url) break;
+        snprintf(dlBuf, sizeof dlBuf, "%s%s", kPrefix[pi], nuomi_url);
+        printf("正在下载 nuomi.exe（%s）...\n", kPrefix[pi][0] ? kPrefix[pi] : "官方");
+        if (nuomi_http_download_to_file(dlBuf, newPath, err, sizeof err)) { got = true; break; }
+        fprintf(stderr, "  下载失败（%s）：%s\n", kPrefix[pi][0] ? kPrefix[pi] : "官方", err);
+    }
+    if (!got) {
+        fprintf(stderr, "下载失败：所有源都无法下载 nuomi.exe。\n");
         rc = 1;
         goto cleanup;
     }
