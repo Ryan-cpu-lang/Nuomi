@@ -149,10 +149,11 @@ static void cg_lea_rax_rip(CGBuf* b) { cg_u8(b,0x48); cg_u8(b,0x8D); cg_u8(b,0x0
 /* ---- 系统调用发射 ----
  * 约定（见 include/novus_syscall.h）：
  *   rax = syscall 号，rdi/rsi/rdx = 参数，返回值在 rax
- *   入口用中断指令 int 0x80（内核 trap 打印含 cs=，说明是中断门而非 syscall 指令）
+ *   （第 4 参是 r10，见 include/novus_syscall.h）
+ *   入口是 syscall 指令（官方规范 §2：MSR_LSTAR → syscall_entry，非 int 0x80）
  *
  * 实现方式：所有 syscall 站点都 `call` 到 .text 段里的**统一跳板**，
- * 跳板内容是 `int 0x80 ; ret`（真机上：进入内核 → 返回 → 回到调用点）。
+ * 跳板内容是 `syscall ; ret`（真机上：进入内核 → 返回 → 回到调用点）。
  * 这样做的好处：
  *   ① syscall 指令只出现一次，宿主/调试器只需处理一个位置；
  *   ② 跳板有富余字节，宿主可原地把它替换成「调宿主桩」的序列，
@@ -162,7 +163,7 @@ static void cg_mov_rdi_imm(CGBuf* b, int64_t v) { cg_u8(b,0x48); cg_u8(b,0xBF); 
 static void cg_mov_rsi_imm(CGBuf* b, int64_t v) { cg_u8(b,0x48); cg_u8(b,0xBE); cg_u64(b,(uint64_t)v); } /* mov rsi, imm64 */
 static void cg_mov_rdx_imm(CGBuf* b, int64_t v) { cg_u8(b,0x48); cg_u8(b,0xBA); cg_u64(b,(uint64_t)v); } /* mov rdx, imm64 */
 static void cg_mov_rcx_imm(CGBuf* b, int64_t v) { cg_u8(b,0x48); cg_u8(b,0xB9); cg_u64(b,(uint64_t)v); } /* mov rcx, imm64 */
-/* syscall 跳板：int 0x80 ; ret。放在 .text 段末尾，符号 __nuomi_syscall_trampoline */
+/* syscall 跳板：syscall ; ret。放在 .text 段末尾，符号 __nuomi_syscall_trampoline */
 #define NUOMI_SYSCALL_TRAMP_SIZE 32
 
 /* ====================== 符号辅助 ====================== */
@@ -843,10 +844,10 @@ int nuomi_compile_to_nuc(const char* src, uint8_t** out, size_t* out_size, char*
     for (int i = 0; i < c.ft.n; i++) {
         FuncDef* fd = &c.ft.f[i];
         if (fd->name && strcmp(fd->name, "__nuomi_syscall_trampoline") == 0) {
-            /* 跳板：int 0x80 ; ret ；后 13 字节留白，供宿主原地替换成宿主桩 */
+            /* 跳板：syscall ; ret ；后 13 字节留白，供宿主原地替换成宿主桩 */
             fd->offset = text.len;
-            cg_u8(&text, 0xCD);
-            cg_u8(&text, (uint8_t)NOVUS_SYSCALL_INTR_VECTOR);
+            cg_u8(&text, 0x0F);
+            cg_u8(&text, 0x05);
             cg_u8(&text, 0xC3);
             for (int k = 3; k < NUOMI_SYSCALL_TRAMP_SIZE; k++) cg_u8(&text, 0x90);
             fd->size = NUOMI_SYSCALL_TRAMP_SIZE;

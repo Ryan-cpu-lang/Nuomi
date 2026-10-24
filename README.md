@@ -14,7 +14,7 @@ Nuomi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从�
 
 ## 📥 下载（Windows / Novus / Linux）
 
-> 当前版本：**v0.3.0**（Route-A M3 里程碑）—— 解释器全功能；编译器支持 整数 / 函数(递归) / 局部变量 / if·while / 比较 / **let·let*·letrec** / **字符串字面量** → `.nuc`
+> 当前版本：**v0.3.0**（Route-A M3 里程碑）—— 解释器全功能；编译器支持 整数 / 函数(递归) / 局部变量 / if·while / 比较 / **let·let*·letrec** / **字符串字面量** / **print·println（走 syscall write）** → `.nuc`
 
 ### 🪟 Windows
 
@@ -78,7 +78,7 @@ nuomi update --check   # 只检查、不下载
 
 - 详见 [`dist/novus/README.md`](dist/novus/README.md)（校验 / 重新编译方法）
 - 自编程序：宿主机上 `nuomi -c 程序.nuomi -o 程序.nuc`
-- ⚠️ 编译子集暂无 I/O（`print`/`println` 等内置函数暂不能编译，待 novus 系统调用号表公布）
+- **print / println / print-int 已可编译**（走 novus `write` syscall；号表与入口已按官方《Novus-WM 与 IPC 协议规范 V1.0》扶正）。文件 I/O（open/read/fwrite/close/stat/opendir/readdir/mkdir）已有 syscall 号但待内核确认实现；delete/rmdir/mv 暂缺 unlink/rmdir/rename syscall。
 
 ### 🐧 Linux
 

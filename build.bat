@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 setlocal
 rem ============================================================
 rem  Nuomi + NUC toolchain - Windows build (produces a single nuomi.exe)
@@ -16,10 +17,10 @@ if not defined CC (
 )
 echo [build] compiler = %CC%
 
-rem nuomi: 单一可执行文件。解释器 + -c 编译后端 (codegen.c) + NUC 读写 (nucfmt.c)
-rem + NUC 工具链 (nucutil.c，提供 nuomi nuc 子命令) 全部链接进这一个 exe。
-rem -lkernel32: main.c 在 Windows 上把控制台设为 UTF-8 (SetConsoleOutputCP/SetConsoleCP)；
-rem   nucutil.c 的 run 也用到 VirtualAlloc，同样需要 kernel32。
+rem nuomi: single exe = interpreter + -c codegen (codegen.c) + NUC read/write (nucfmt.c)
+rem + NUC toolchain (nucutil.c, provides "nuomi nuc" subcommand), all linked in.
+rem -lkernel32: main.c sets console to UTF-8 on Windows via SetConsoleOutputCP and SetConsoleCP
+rem   nucutil.c run also uses VirtualAlloc, so kernel32 is required too.
 "%CC%" -O2 -Iinclude -lkernel32 src\value.c src\reader.c src\env.c src\eval.c src\native.c src\json.c src\http.c src\proc.c src\codegen.c src\nucfmt.c src\update.c src\nucutil.c src\main.c -o nuomi.exe
 if errorlevel 1 (echo [build] nuomi FAILED & exit /b 1)
 
