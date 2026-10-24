@@ -103,7 +103,7 @@
   (if (equal? k "W") 'up
   (if (equal? k "S") 'down
   (if (equal? k "A") 'left
-  (if (equal? k "D") 'right nil))))))))))))
+  (if (equal? k "D") 'right nil)))))))))))))
 (define (handle-key k)
   (define nd (key-dir k))
   (if (and nd (not (opposite? nd dir))) (set! dir nd) 0))
