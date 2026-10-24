@@ -1,4 +1,4 @@
-; ============================================================================
+﻿; ============================================================================
 ;  Nuomi 安装包脚本（Inno Setup）
 ;  用法：用 Inno Setup Compiler 打开本文件 -> Build。产出 installer/out/Nuomi-Setup.exe
 ;
@@ -13,6 +13,7 @@
 #define MyAppVersion   "0.3.0"
 #define MyAppPublisher "Nuomi Lang"
 #define MyAppURL       "https://github.com/Ryan-cpu-lang/Nuomi"
+#define MyAppNovusURL "https://github.com/chen-xin-Liam/novus-os"
 
 [Setup]
 ; AppId 用双花括号转义，避免被当成 Inno 常量
@@ -62,11 +63,29 @@ Name: "{autodesktop}\运行 Nuomi 脚本"; Filename: "{sys}\cmd.exe"; Parameters
       IconFilename: "{app}\nuomi.ico"; Tasks: desktopicon; \
       Comment: "把 .nuomi 脚本拖到这里即可运行（窗口不自动关闭）"
 Name: "{group}\Nuomi 官网"; Filename: "{#MyAppURL}"
+Name: "{group}\Novus / NUC 格式说明 (liam 仓库)"; Filename: "{#MyAppNovusURL}"; \
+      IconFilename: "{app}\nuomi.ico"; Comment: "NUC 原生可执行格式（novus-os）规范，来自 chen-xin-Liam/novus-os"
 Name: "{autodesktop}\Nuomi"; Filename: "{app}\nuomi.exe"; \
       IconFilename: "{app}\nuomi.ico"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "额外选项："
+
+[Registry]
+; ---------- 文件类型关联：.nuomi 源文件（解释执行） ----------
+Root: HKCU; Subkey: "Software\Classes\.nuomi"; ValueType: string; ValueData: "Nuomi.Script"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Nuomi.Script"; ValueType: string; ValueData: "Nuomi 脚本 (.nuomi)"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Nuomi.Script\DefaultIcon"; ValueType: string; ValueData: "{app}\nuomi.ico"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Nuomi.Script\shell\open\command"; ValueType: string; ValueData: """{app}\nuomi.exe"" ""%1"""; Flags: uninsdeletekey
+
+; ---------- 文件类型关联：.nuc NUC 原生格式（诺维斯 / novus-os 版） ----------
+Root: HKCU; Subkey: "Software\Classes\.nuc"; ValueType: string; ValueData: "Nuomi.Nuc"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Nuomi.Nuc"; ValueType: string; ValueData: "NUC 原生可执行 (novus-os) — 详情见 github.com/chen-xin-Liam/novus-os"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Nuomi.Nuc\DefaultIcon"; ValueType: string; ValueData: "{app}\nuomi.ico"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Nuomi.Nuc\shell\open\command"; ValueType: string; ValueData: """{app}\nuomi.exe"" nuc run ""%1"""; Flags: uninsdeletekey
+; 右键菜单：查看 Novus / NUC 格式说明（liam 仓库）
+Root: HKCU; Subkey: "Software\Classes\Nuomi.Nuc\shell\view_novus_docs"; ValueType: string; ValueData: "查看 Novus / NUC 格式说明 (liam 仓库)"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Nuomi.Nuc\shell\view_novus_docs\command"; ValueType: string; ValueData: """{sys}\cmd.exe"" /c start "" ""{#MyAppNovusURL}"""; Flags: uninsdeletekey
 
 [Code]
 { PATH 变更后的 WM_SETTINGCHANGE 广播由 [Setup] 的 ChangesEnvironment=yes 自动完成，
