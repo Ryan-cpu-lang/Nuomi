@@ -1289,6 +1289,7 @@ void registerNatives(Env* g) {
     /* HTTP 组单独成文件（src/http.c）：WinHTTP 动态加载，代码量大 */
     registerHttpNatives(g);
     registerProcNatives(g);   /* 进程组单独成文件 */
+    registerWmNatives(g);     /* 窗口组单独成文件（src/wm.c） */
 
     /* 高阶函数与列表工具 */
     defNative(g, "map", natMap);

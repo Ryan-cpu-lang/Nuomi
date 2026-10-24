@@ -205,7 +205,7 @@ nuomi> (sq 9)
 >
 > 🎮 `cls`/`home`/`sleep`/`key`/`random`/`draw` 是 2026-10-21 为实时游戏加的原语（Windows 走 Win32 控制台 + conio，其他平台 ANSI 兜底、无键盘）。贪吃蛇示例见 `samples/snake.nuomi`。
 >
-> 📁 **文件系统**：糯米在 novus 里是系统壳语言（≈ PowerShell），文件操作是基本功。宿主用 Win32 API、其他平台 POSIX，将来上 novus 换 syscall、**脚本接口不变**。软错误语义：失败返回 `nil`/`false`/`-1`，不中止程序。**故意不提供递归删除**——`rm -rf` 请用 `ls`+`delete`+`rmdir` 在脚本层自己组合（`samples/files.nuomi` 有 6 行实现）。这是真实破坏力，删了不可恢复。
+> 📁 **文件系统**：糯米在 novus 上是**用户级应用语言**（团队定位：专注应用层、不当系统 shell，图形化窗口走 Novus-WM 协议），文件操作是基本功。宿主用 Win32 API、其他平台 POSIX，将来上 novus 换 syscall、**脚本接口不变**。软错误语义：失败返回 `nil`/`false`/`-1`，不中止程序。**故意不提供递归删除**——`rm -rf` 请用 `ls`+`delete`+`rmdir` 在脚本层自己组合（`samples/files.nuomi` 有 6 行实现）。这是真实破坏力，删了不可恢复。
 >
 > 💡 **游戏防闪烁三件套**（`samples/snake.nuomi` 实测有效）：每帧**不要** `cls` 清屏（抹全屏就是闪瞎眼的根因）——用 `home` 只把光标移回左上角，所有行等宽重绘自然覆盖旧画面；再把整帧拼成**一个**字符串用 `draw` 一次写出，控制台整帧呈现，不会看到画到一半的半成品。
 
@@ -233,6 +233,7 @@ nuomi> (sq 9)
 | ZIP（解压 mods / natives）      | ⬜         |
 | SHA-1（文件完整性校验）              | ⬜         |
 | 并发下载                        | ⬜ 当前单线程串行 |
+| **GUI 窗口**（Novus-WM：建窗/画图元/文字/事件） | ⬜ 规划中（liam 建议，走内核 IPC） |
 
 > **递归深度**：约 3700+ 层函数递归安全可用（早期版本约 500 层即栈溢出）；超出会输出可读报错 `maximum recursion depth exceeded` 并终止，不会崩溃。
 
