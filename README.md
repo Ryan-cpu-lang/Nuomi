@@ -1,17 +1,20 @@
 # Nuomi —— 一门纯 C 制作的极简编程语言 + NUC 工具链
 
 Nuomi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从零实现（树遍历解释器 + 引用计数 GC）。
+  
 本仓库同时包含 **NUC 可执行二进制格式（novus-os）** 的读写 / 校验 / dump 工具链，方便把它接入你自己的系统。
 
 > NUC 规范基准：<https://github.com/chen-xin-Liam/novus-os/blob/main/docs/NUC%20%E5%8F%AF%E6%89%A7%E8%A1%8C%E4%BA%8C%E8%BF%9B%E5%88%B6%E6%A0%BC%E5%BC%8F%E8%A7%84%E8%8C%83%20V1.0.md>
 >
 > 📖 语言文档：[`docs/Nuomi语言规范.md`](docs/Nuomi语言规范.md)（**权威规范**，冲突以此为准） ｜ [`Nuomi语言手册.md`](Nuomi语言手册.md)（上手教程）
 
+
+
 ---
 
 ## 📥 下载（Windows / Novus / Linux）
 
-> 当前版本：**v0.3.0**（Route-A M3 里程碑）—— 解释器全功能；编译器支持 整数 / 函数(递归) / 局部变量 / if·while / 比较 / **let·let\*·letrec** / **字符串字面量** → `.nuc`
+> 当前版本：**v0.3.0**（Route-A M3 里程碑）—— 解释器全功能；编译器支持 整数 / 函数(递归) / 局部变量 / if·while / 比较 / **let·let*·letrec** / **字符串字面量** → `.nuc`
 
 ### 🪟 Windows
 
@@ -20,7 +23,7 @@ Nuomi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从�
 3. 双击 **`run-guess.bat`** 玩猜数字、**`run-games.bat`** 看游戏合集
 4. （可选）双击 **`make-shortcuts.bat`** 生成带 Nuomi 图标的快捷方式
 
-💾 **不想自己编译？**直接下载预编译版（Windows x64，单一文件）：**[`nuomi.exe`](https://github.com/Ryan-cpu-lang/Nuomi/releases/download/v0.3.0/nuomi.exe)（来自 [Release v0.3.0](https://github.com/Ryan-cpu-lang/Nuomi/releases/tag/v0.3.0)）—— 解释器、编译后端、NUC 工具链都在这一个 exe 里，用 `nuomi nuc` 调用 NUC 命令。
+💾 **不想自己编译？**&#x76F4;接下载预编译版（Windows x64，单一文件）：\*\*[`nuomi.exe`](https://github.com/Ryan-cpu-lang/Nuomi/releases/download/v0.3.0/nuomi.exe)（来自 [Release v0.3.0](https://github.com/Ryan-cpu-lang/Nuomi/releases/tag/v0.3.0)）—— 解释器、编译后端、NUC 工具链都在这一个 exe 里，用 `nuomi nuc` 调用 NUC 命令。
 
 > 完整版本历史与各平台预编译包见 [**Releases**](https://github.com/Ryan-cpu-lang/Nuomi/releases) 页面。
 
@@ -39,18 +42,6 @@ nuomi update --check   # 只检查、不下载
 - 当前进程仍是旧版本，**重启 nuomi 后生效**。
 - 开发 / 自托管：`nuomi update --url <api地址>` 可指向自定义更新源；`nuomi update --exe <路径>` 可指定更新目标（测试用）。
 
-#### 📦 通过 npm 安装（需先装 Node.js）
-
-如果你装了 Node.js，可以直接用 npm 装——装完命令行里 `nuomi` 全局可用，也支持 `npx nuomi-ryan` 临时跑（不安装直接用）：
-
-```bash
-npm install -g nuomi-ryan   # 装完敲 nuomi 即用
-npx nuomi-ryan              # 不安装、临时跑
-```
-
-> 包名是 `nuomi-ryan`（npm 上 `nuomi` 已被占用），但装完敲的命令**仍是 `nuomi`**。仅支持 Windows x64。
-> 发布包位于仓库 [`npm/`](npm/) 目录，发布前由 `prepublishOnly` 自动把最新编译的 `nuomi.exe` 同步进去。
-
 #### 📦 一键安装（推荐）：装完 cmd 里直接打 `nuomi`
 
 下载 **[`Nuomi-Setup.exe`](installer/out/Nuomi-Setup.exe)** → 双击 → 一路下一步即可。
@@ -67,21 +58,23 @@ npx nuomi-ryan              # 不安装、临时跑
 装完后开始菜单里多了一个 **「运行 Nuomi 脚本」** 快捷方式：把任意 `.nuomi` 文件拖到它上面就能运行，而且跑完窗口不自动关闭（方便看输出）。它等价于以前的「运行Nuomi脚本.bat」，但不再写死仓库路径、也不依赖那个 bat 了。
 
 **想自己重编安装包？** 用 [Inno Setup](https://jrsoftware.org/isdl.php) 打开 [`installer/Nuomi.iss`](installer/Nuomi.iss) 按 F9，或命令行：
+
 ```bat
 "C:\Program Files\Inno Setup 7\ISCC.exe" installer\Nuomi.iss
 ```
+
 产出 `installer\out\Nuomi-Setup.exe`。
 
 ### 🖥️ Novus OS（诺维斯）
 
 直接下载 [`dist/novus/`](dist/novus/) 下**已编译好的 .nuc**，拷进 novus-os 用 shell exec 执行：
 
-| 文件 | 功能 | 入口返回值 |
-|---|---|---|
-| [`demo.nuc`](dist/novus/demo.nuc) | 算术演示 | 142 |
-| [`fact.nuc`](dist/novus/fact.nuc) | 递归阶乘 fact(10) | 3628800 |
-| [`fib.nuc`](dist/novus/fib.nuc) | 双递归斐波那契 fib(10) | 55 |
-| [`sum.nuc`](dist/novus/sum.nuc) | while 循环求和 0..99 | 4950 |
+| 文件                                | 功能               | 入口返回值   |
+| --------------------------------- | ---------------- | ------- |
+| [`demo.nuc`](dist/novus/demo.nuc) | 算术演示             | 142     |
+| [`fact.nuc`](dist/novus/fact.nuc) | 递归阶乘 fact(10)    | 3628800 |
+| [`fib.nuc`](dist/novus/fib.nuc)   | 双递归斐波那契 fib(10)  | 55      |
+| [`sum.nuc`](dist/novus/sum.nuc)   | while 循环求和 0..99 | 4950    |
 
 - 详见 [`dist/novus/README.md`](dist/novus/README.md)（校验 / 重新编译方法）
 - 自编程序：宿主机上 `nuomi -c 程序.nuomi -o 程序.nuc`
@@ -94,6 +87,7 @@ git clone https://github.com/Ryan-cpu-lang/nuomi.git && cd nuomi
 make          # 需要 gcc + make，产出单一 nuomi（已含 NUC 工具链）
 make test     # 冒烟：全部样例 + NUC 流水线
 ```
+
 （或 `./test-linux.sh` 一键）
 
 > 预编译交付物直接入库：`dist/windows/*.exe`（Windows x64 预编译包）、`dist/novus/*.nuc`（诺维斯渠道）。其余本地 build 产物（*.exe/*.o 等）仍不入库，三平台统一从源码一键构建。
@@ -142,6 +136,7 @@ build.bat       # 自动找 clang，找不到再用 gcc
 ## 3. 用 Nuomi 语言
 
 **REPL：**
+
 ```bash
 ./nuomi
 nuomi> (+ 1 2 3)
@@ -153,6 +148,7 @@ nuomi> (sq 9)
 ```
 
 **跑脚本：**
+
 ```bash
 ./nuomi samples/factorial.nuomi
 # fact(10) = 3628800
@@ -160,46 +156,46 @@ nuomi> (sq 9)
 
 ### 3.1 语法速览
 
-| 形式 | 含义 |
-|------|------|
-| `(+ - * / %)` | 算术（可变参数） |
-| `(= < > <= >=)` | 数值比较 |
-| `(and or not)` | 逻辑（`and`/`or` 短路） |
-| `(if c t e)` | 分支 |
-| `(while c body...)` | 循环 |
-| `(define x 1)` / `(define (f a b) body...)` | 变量 / 函数定义 |
-| `(set! x v)` | 重新赋值 |
-| `(let ((x 1)) body...)` | **局部作用域**（并行绑定，不污染全局） |
-| `(let* ((x 1)) body...)` | 局部作用域（顺序绑定，后项可见前项） |
-| `(letrec ((f ...)) body...)` | 局部作用域（可自引用 / 互递归） |
-| `(lambda (a) body...)` | 匿名函数（闭包） |
-| `(begin a b c)` | 顺序执行，返回最后一个 |
-| `'x` | 引号（不求值） |
-| `❝hello❞` | 字符串（**推荐定界符**，免转义）/ `"hello"` 传统写法同样可用 |
-| `(map fn coll)` `(filter pred coll)` `(reduce fn coll [init])` | **高阶函数** |
-| `(range n [end [step]])` | 数字序列（支持负步长） |
-| `(reverse coll)` `(append a b)` `(last coll)` `(null? x)` `(member? x coll)` | 序列工具 |
-| `(assoc lst key val)` | 关联表（两参为查询，未命中返回 `nil`） |
-| `(abs x)` `(floor x)` `(ceil x)` `(round x)` `(sqrt x)` `(pow a b)` `(min ...)` `(max ...)` | 数学函数 |
-| `(number? x)` `(string? x)` `(list? x)` `(vector? x)` `(function? x)` `(bool? x)` | 类型判断 |
-| `(list 1 2 3)` | 链表 |
-| `[1 2 3]` | 向量（数组，随机访问） |
-| `(cons car cdr)` `(car l)` `(cdr l)` `(nth l i)` `(get v i)` `(set v i x)` `(length x)` | 容器操作 |
-| `(str a b c)` | 拼接成字符串 |
-| `(substring s [start [end]])` | 按**字节**切片；start/end 支持负数（`-1`=末尾） |
-| `(string-search hay needle [start])` | 找子串，返回下标；找不到 `-1` |
-| `(print ...) (println ...)` | 输出 |
-| `(input [提示])` `(input-int [提示])` | 行式输入（读到回车为止） |
-| `(cls)` `(home)` `(show-cursor)` | 清屏+归位+隐光标 / 只归位+隐光标 / 恢复光标 |
-| `(sleep 毫秒)` | 延时 |
-| `(key)` | **非阻塞**键盘：无按键返回 `nil`；方向键返回 `'up` `'down` `'left` `'right`；Esc 返回 `'esc`；普通键返回单字符字符串 |
-| `(random n)` | `[0, n)` 随机整数（LCG + 时间种子） |
-| `(draw s)` | **原样**输出字符串（不加引号），一次 `fwrite` 写完——游戏整帧输出用 |
-| `(exists? p)` `(is-dir? p)` `(file-size p)` | 查询：存在 / 是目录 / 字节数（失败 -1） |
-| `(read-file p)` `(write-file p s)` `(append-file p s)` | 读整文件 / 覆盖写 / 追加写 |
-| `(ls dir)` | 列目录 → 文件名列表（不含 `.` `..`；失败 `nil`） |
-| `(mkdir p)` `(rmdir p)` `(delete p)` `(mv a b)` `(cp a b)` | 建目录 / 删空目录 / 删文件 / 移动 / 复制（返回布尔） |
-| `(json-parse s)` `(json-get v k...)` `(json-stringify v)` `(json-obj k v...)` | JSON 解析 / 多层路径取值 / 序列化 / 构造对象 |
+| 形式                                                                                          | 含义                                                                                   |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `(+ - * / %)`                                                                               | 算术（可变参数）                                                                             |
+| `(= < > <= >=)`                                                                             | 数值比较                                                                                 |
+| `(and or not)`                                                                              | 逻辑（`and`/`or` 短路）                                                                    |
+| `(if c t e)`                                                                                | 分支                                                                                   |
+| `(while c body...)`                                                                         | 循环                                                                                   |
+| `(define x 1)` / `(define (f a b) body...)`                                                 | 变量 / 函数定义                                                                            |
+| `(set! x v)`                                                                                | 重新赋值                                                                                 |
+| `(let ((x 1)) body...)`                                                                     | **局部作用域**（并行绑定，不污染全局）                                                                |
+| `(let* ((x 1)) body...)`                                                                    | 局部作用域（顺序绑定，后项可见前项）                                                                   |
+| `(letrec ((f ...)) body...)`                                                                | 局部作用域（可自引用 / 互递归）                                                                    |
+| `(lambda (a) body...)`                                                                      | 匿名函数（闭包）                                                                             |
+| `(begin a b c)`                                                                             | 顺序执行，返回最后一个                                                                          |
+| `'x`                                                                                        | 引号（不求值）                                                                              |
+| `❝hello❞`                                                                                   | 字符串（**推荐定界符**，免转义）/ `"hello"` 传统写法同样可用                                               |
+| `(map fn coll)` `(filter pred coll)` `(reduce fn coll [init])`                              | **高阶函数**                                                                             |
+| `(range n [end [step]])`                                                                    | 数字序列（支持负步长）                                                                          |
+| `(reverse coll)` `(append a b)` `(last coll)` `(null? x)` `(member? x coll)`                | 序列工具                                                                                 |
+| `(assoc lst key val)`                                                                       | 关联表（两参为查询，未命中返回 `nil`）                                                               |
+| `(abs x)` `(floor x)` `(ceil x)` `(round x)` `(sqrt x)` `(pow a b)` `(min ...)` `(max ...)` | 数学函数                                                                                 |
+| `(number? x)` `(string? x)` `(list? x)` `(vector? x)` `(function? x)` `(bool? x)`           | 类型判断                                                                                 |
+| `(list 1 2 3)`                                                                              | 链表                                                                                   |
+| `[1 2 3]`                                                                                   | 向量（数组，随机访问）                                                                          |
+| `(cons car cdr)` `(car l)` `(cdr l)` `(nth l i)` `(get v i)` `(set v i x)` `(length x)`     | 容器操作                                                                                 |
+| `(str a b c)`                                                                               | 拼接成字符串                                                                               |
+| `(substring s [start [end]])`                                                               | 按**字节**切片；start/end 支持负数（`-1`=末尾）                                                    |
+| `(string-search hay needle [start])`                                                        | 找子串，返回下标；找不到 `-1`                                                                    |
+| `(print ...) (println ...)`                                                                 | 输出                                                                                   |
+| `(input [提示])` `(input-int [提示])`                                                           | 行式输入（读到回车为止）                                                                         |
+| `(cls)` `(home)` `(show-cursor)`                                                            | 清屏+归位+隐光标 / 只归位+隐光标 / 恢复光标                                                           |
+| `(sleep 毫秒)`                                                                                | 延时                                                                                   |
+| `(key)`                                                                                     | **非阻塞**键盘：无按键返回 `nil`；方向键返回 `'up` `'down` `'left` `'right`；Esc 返回 `'esc`；普通键返回单字符字符串 |
+| `(random n)`                                                                                | `[0, n)` 随机整数（LCG + 时间种子）                                                            |
+| `(draw s)`                                                                                  | **原样**输出字符串（不加引号），一次 `fwrite` 写完——游戏整帧输出用                                            |
+| `(exists? p)` `(is-dir? p)` `(file-size p)`                                                 | 查询：存在 / 是目录 / 字节数（失败 -1）                                                             |
+| `(read-file p)` `(write-file p s)` `(append-file p s)`                                      | 读整文件 / 覆盖写 / 追加写                                                                     |
+| `(ls dir)`                                                                                  | 列目录 → 文件名列表（不含 `.` `..`；失败 `nil`）                                                    |
+| `(mkdir p)` `(rmdir p)` `(delete p)` `(mv a b)` `(cp a b)`                                  | 建目录 / 删空目录 / 删文件 / 移动 / 复制（返回布尔）                                                     |
+| `(json-parse s)` `(json-get v k...)` `(json-stringify v)` `(json-obj k v...)`               | JSON 解析 / 多层路径取值 / 序列化 / 构造对象                                                        |
 
 值类型：数字（double）、布尔 `true`/`false`、空 `nil`、字符串、符号、链表、向量、函数/闭包。
 
@@ -228,15 +224,15 @@ nuomi> (sq 9)
 
 **通往启动器的路线图** —— 糯米写 MC 启动器还缺什么，按依赖顺序：
 
-| 能力 | 状态 |
-|---|---|
-| 文件操作（下载落盘、管理版本目录） | ✅ 12 个原语 |
-| JSON（读懂版本清单 / Modrinth API） | ✅ |
-| **HTTP 请求**（拉清单、下载文件） | ⬜ 下一块 |
-| **进程启动**（spawn java、传参、抓日志） | ⬜ |
-| ZIP（解压 mods / natives） | ⬜ |
-| SHA-1（文件完整性校验） | ⬜ |
-| 并发下载 | ⬜ 当前单线程串行 |
+| 能力                          | 状态        |
+| --------------------------- | --------- |
+| 文件操作（下载落盘、管理版本目录）           | ✅ 12 个原语  |
+| JSON（读懂版本清单 / Modrinth API） | ✅         |
+| **HTTP 请求**（拉清单、下载文件）       | ⬜ 下一块     |
+| **进程启动**（spawn java、传参、抓日志） | ⬜         |
+| ZIP（解压 mods / natives）      | ⬜         |
+| SHA-1（文件完整性校验）              | ⬜         |
+| 并发下载                        | ⬜ 当前单线程串行 |
 
 > **递归深度**：约 3700+ 层函数递归安全可用（早期版本约 500 层即栈溢出）；超出会输出可读报错 `maximum recursion depth exceeded` 并终止，不会崩溃。
 
@@ -250,16 +246,17 @@ NUC 是 novus-os 的原生可执行格式（魔数 `NUC!`，x86_64）。NUC 工�
 Header(48) → SegmentTable → SymbolTable → RelocationTable → StringTable → 段数据(4KiB 页对齐)
 ```
 
-| 表 | 单条大小 |
-|----|----------|
-| Header | 48 字节 |
-| Segment | 32 字节 |
-| Symbol | 24 字节 |
+| 表          | 单条大小  |
+| ---------- | ----- |
+| Header     | 48 字节 |
+| Segment    | 32 字节 |
+| Symbol     | 24 字节 |
 | Relocation | 16 字节 |
 
 入口地址：`entry_rip = text.vaddr + entry_point`（`entry_point` 是 `.text` 段内偏移）。
 
 命令：
+
 ```bash
 # 生成一个带 PC32 重定位、可在真机跑通的最小示例 .nuc
 nuomi nuc emit-demo demo.nuc
@@ -272,6 +269,9 @@ nuomi nuc dump demo.nuc
 
 # （仅 Windows x86_64）把 TEXT 段映射到 RWX 并执行入口，验证整条加载链路
 nuomi nuc run demo.nuc        # 应输出：entry returned: 42 (0x2A)
+```
+
+
 ```
 
 `emit-demo` 产出的 `demo.nuc`：`.text` 里 `call main` 用 `R_X86_64_PC32` 重定位，加载器解析后跳到 `main`（`mov eax,0x2A; ret`），所以执行返回 42——这同时验证了 **格式生成 → 重定位 → 真机执行** 全链路。
