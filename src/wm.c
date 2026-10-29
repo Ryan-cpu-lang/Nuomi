@@ -27,7 +27,31 @@ static int g_wm_trace = 0;
 
 #define W32_MAX   16
 #define W32_KQ    256
+#define W32_CQ    64
 #define W32_DL0   64
+
+/* TCC 自带 winnls.h 不全，没有 CP_UTF8 / MultiByteToWideChar 声明，
+   这里自带纯算法版 UTF-8 <-> UTF-16 转换，避免依赖系统函数。BMP 内字符直接映射；
+   超出 BMP（emoji 等）用 '?' 占位（启动器界面用不到代理对）。 */
+static int utf8_to_wcs(const char* s, wchar_t* out, int outcap) {
+    int wi = 0;
+    while (*s && wi < outcap - 1) {
+        unsigned char c = (unsigned char)*s; unsigned int cp;
+        if (c < 0x80) { cp = c; s += 1; }
+        else if ((c & 0xE0) == 0xC0) { cp = ((c & 0x1F) << 6) | ((unsigned char)s[1] & 0x3F); s += 2; }
+        else if ((c & 0xF0) == 0xE0) { cp = ((c & 0x0F) << 12) | (((unsigned char)s[1] & 0x3F) << 6) | ((unsigned char)s[2] & 0x3F); s += 3; }
+        else if ((c & 0xF8) == 0xF0) { cp = ((c & 0x07) << 18) | (((unsigned char)s[1] & 0x3F) << 12) | (((unsigned char)s[2] & 0x3F) << 6) | ((unsigned char)s[3] & 0x3F); s += 4; }
+        else { s += 1; continue; }
+        out[wi++] = (cp <= 0xFFFF) ? (wchar_t)cp : (wchar_t)'?';
+    }
+    out[wi] = 0; return wi;
+}
+static int wunit_to_utf8(wchar_t ch, char* out) {
+    unsigned int cp = (unsigned int)ch;
+    if (cp < 0x80) { out[0] = (char)cp; return 1; }
+    else if (cp < 0x800) { out[0] = (char)(0xC0 | (cp >> 6)); out[1] = (char)(0x80 | (cp & 0x3F)); return 2; }
+    else { out[0] = (char)(0xE0 | (cp >> 12)); out[1] = (char)(0x80 | ((cp >> 6) & 0x3F)); out[2] = (char)(0x80 | (cp & 0x3F)); return 3; }
+}
 
 typedef struct {
     int op, x, y, w, h; uint32_t color; int radius;
@@ -38,6 +62,8 @@ typedef struct {
     int used; uint32_t id; HWND hwnd; int w, h;
     W32Cmd* dl; int dn, dcap;
     int keyq[W32_KQ]; int kqh, kqt;
+    int cxq[W32_CQ]; int cyq[W32_CQ]; int cqh, cqt;   /* 鼠标左键点击队列(x,y) */
+    wchar_t charq[W32_CQ]; int hqh, hqt;             /* 字符输入队列(UTF-16) */
     int want_close;
 } W32Win;
 
@@ -70,6 +96,24 @@ static LRESULT CALLBACK w32_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (W) w32_pushkey(W, (int)wp);
         return 0;
     }
+    case WM_LBUTTONDOWN: {
+        W32Win* W = w32_by_hwnd(hwnd);
+        if (W) {
+            int x = (int)(short)LOWORD(lp);
+            int y = (int)(short)HIWORD(lp);
+            int n = (W->cqt + 1) % W32_CQ;
+            if (n != W->cqh) { W->cxq[W->cqt] = x; W->cyq[W->cqt] = y; W->cqt = n; }
+        }
+        return 0;
+    }
+    case WM_CHAR: {
+        W32Win* W = w32_by_hwnd(hwnd);
+        if (W && wp >= 0x20) {   /* 跳过控制字符；退格由 WM_KEYDOWN→window-event 的 "back" 处理 */
+            int n = (W->hqt + 1) % W32_CQ;
+            if (n != W->hqh) { W->charq[W->hqt] = (wchar_t)wp; W->hqt = n; }
+        }
+        return 0;
+    }
     case WM_CLOSE: {
         W32Win* W = w32_by_hwnd(hwnd);
         if (W) W->want_close = 1;
@@ -99,7 +143,10 @@ static LRESULT CALLBACK w32_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                           OUT_TT_PRECIS,CLIP_DEFAULT_PRECIS,DEFAULT_QUALITY,
                                           FIXED_PITCH|FF_DONTCARE,"Consolas");
                     HGDIOBJ of = SelectObject(mem, f);
-                    TextOutA(mem, c->tx, c->ty, c->text, (int)strlen(c->text));
+                    /* 源码字符串是 UTF-8；UTF-8 → UTF-16 后用 TextOutW 绘制，中文正常 */
+                    wchar_t wbuf[256];
+                    int wn = utf8_to_wcs(c->text, wbuf, 256);
+                    if (wn > 0) TextOutW(mem, c->tx, c->ty, wbuf, wn);
                     SelectObject(mem, of); DeleteObject(f);
                 } else {
                     RECT r = { c->x, c->y, c->x + c->w, c->y + c->h };
@@ -141,7 +188,7 @@ static W32Win* w32_alloc(void) {
         W32Win* W = &g_w32[i];
         W->used = 1; W->id = g_w32_next++; W->hwnd = NULL; W->want_close = 0;
         W->dcap = W32_DL0; W->dn = 0; W->dl = (W32Cmd*)malloc(sizeof(W32Cmd)*W->dcap);
-        W->kqh = W->kqt = 0;
+        W->kqh = W->kqt = 0; W->cqh = W->cqt = 0; W->hqh = W->hqt = 0;
         return W;
     }
     return NULL;
@@ -290,6 +337,7 @@ static Value w32_key_sym(int vk) {
         case VK_DOWN: s="down"; len=4; break;
         case VK_LEFT: s="left"; len=4; break;
         case VK_RIGHT: s="right"; len=5; break;
+        case VK_BACK: s="back"; len=4; break;
         case VK_ESCAPE: s="esc"; len=3; break;
         case VK_SPACE: s="space"; len=5; break;
         case VK_RETURN: s="enter"; len=5; break;
@@ -310,6 +358,33 @@ static Value w32_key_sym(int vk) {
     return NIL_VAL;
 }
 
+/* (window-click [win]) -> nil 或整数 (x*100000 + y)；同时泵消息让窗口保持响应 */
+static Value w32Click(int c, Value* a, Env* e) {
+    (void)e;
+    W32Win* W = (c>=1 && IS_NUM(a[0])) ? w32_by_id((uint32_t)AS_NUM(a[0])) : (g_w32_cur?w32_by_id(g_w32_cur):NULL);
+    if (!W) return NIL_VAL;
+    w32_pump();
+    if (W->cqh == W->cqt) return NIL_VAL;
+    int x = W->cxq[W->cqh]; int y = W->cyq[W->cqh];
+    W->cqh = (W->cqh + 1) % W32_CQ;
+    return NUM_VAL((double)(x * 100000 + y));
+}
+
+/* (window-char [win]) -> nil 或单个字符的 UTF-8 字符串（字母/数字/中文输入法字符） */
+static Value w32Char(int c, Value* a, Env* e) {
+    (void)e;
+    W32Win* W = (c>=1 && IS_NUM(a[0])) ? w32_by_id((uint32_t)AS_NUM(a[0])) : (g_w32_cur?w32_by_id(g_w32_cur):NULL);
+    if (!W) return NIL_VAL;
+    w32_pump();
+    if (W->hqh == W->hqt) return NIL_VAL;
+    wchar_t ch = W->charq[W->hqh];
+    W->hqh = (W->hqh + 1) % W32_CQ;
+    char buf[8]; int n = wunit_to_utf8(ch, buf);
+    if (n <= 0) return NIL_VAL;
+    ObjString* o = internString(buf, n, true); retain(OBJ_VAL(o));
+    return OBJ_VAL(o);
+}
+
 /* (window-event [block]) -> 按键符号或 nil；同时泵消息让窗口保持响应 */
 static Value w32Event(int c, Value* a, Env* e) {
     (void)c; (void)a; (void)e;
@@ -317,6 +392,7 @@ static Value w32Event(int c, Value* a, Env* e) {
     if (!g_w32_cur) return NIL_VAL;
     W32Win* W = w32_by_id(g_w32_cur);
     if (!W) return NIL_VAL;
+    if (W->want_close) { ObjString* o = internString("close", 5, true); retain(OBJ_VAL(o)); return OBJ_VAL(o); }
     int vk = w32_popkey(W);
     return vk ? w32_key_sym(vk) : NIL_VAL;
 }
@@ -338,6 +414,8 @@ void registerWmNatives(Env* g) {
     defNative(g, "window-title",      w32Title);
     defNative(g, "window-close",      w32Close);
     defNative(g, "window-event",      w32Event);
+    defNative(g, "window-click",      w32Click);
+    defNative(g, "window-char",       w32Char);
     defNative(g, "window-trace",      w32Trace);
 }
 
@@ -395,6 +473,8 @@ static Value natWinMove(int c, Value* a, Env* e){ (void)e; if(c<3||!IS_NUM(a[0])
 static Value natWinTitle(int c, Value* a, Env* e){ (void)e; if(c<2||!IS_NUM(a[0])||!IS_OBJ(a[1])||!hostwm_find((uint32_t)AS_NUM(a[0]))){runtimeError("window-title: unknown window");return NIL_VAL;} return NIL_VAL; }
 static Value natWinClose(int c, Value* a, Env* e){ (void)e; if(c<1||!IS_NUM(a[0])){runtimeError("window-close: unknown window");return NIL_VAL;} HostWin* hw=hostwm_find((uint32_t)AS_NUM(a[0])); if(hw)hw->used=0; return NIL_VAL; }
 static Value natWinEvent(int c, Value* a, Env* e){ (void)c;(void)a;(void)e; return NIL_VAL; }
+static Value natWinClick(int c, Value* a, Env* e){ (void)e; if(c<1||!IS_NUM(a[0])||!hostwm_find((uint32_t)AS_NUM(a[0]))){return NIL_VAL;} return NIL_VAL; }
+static Value natWinChar(int c, Value* a, Env* e){ (void)e; if(c<1||!IS_NUM(a[0])||!hostwm_find((uint32_t)AS_NUM(a[0]))){return NIL_VAL;} return NIL_VAL; }
 static Value natWinTrace(int c, Value* a, Env* e){ (void)e; if(c>=1&&IS_NUM(a[0])) g_wm_trace=AS_NUM(a[0])!=0; return NIL_VAL; }
 
 void registerWmNatives(Env* g) {
@@ -408,6 +488,8 @@ void registerWmNatives(Env* g) {
     defNative(g, "window-title",      natWinTitle);
     defNative(g, "window-close",      natWinClose);
     defNative(g, "window-event",      natWinEvent);
+    defNative(g, "window-click",      natWinClick);
+    defNative(g, "window-char",       natWinChar);
     defNative(g, "window-trace",      natWinTrace);
 }
 #endif

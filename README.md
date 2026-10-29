@@ -2,7 +2,9 @@
 
 Nuomi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从零实现（树遍历解释器 + 引用计数 GC）。
 
-内置 **窗口 / GUI 原语**（Windows 上是真 Win32 窗口，将来 novus 上走 Novus-WM IPC）——窗口版贪吃蛇 `samples/snake-wm.nuomi` 开箱即玩；另有 **HTTP / 进程 / JSON / 文件** 等应用层原语。
+内置 **窗口 / GUI 原语**（Windows 上是真 Win32 窗口，将来 novus 上走 Novus-WM IPC）——窗口版贪吃蛇 `samples/snake-wm.nuomi` 开箱即玩；另有 **HTTP / 进程 / SHA-1 / unzip / 字符串 / JSON / 文件** 等应用层原语。
+
+> 🐍 旗舰应用：[**NuomiLauncher**](https://github.com/Ryan-cpu-lang/NuomiLauncher) —— 用糯米语言写的 Minecraft 启动器（GUI + CLI），就是靠下面这些原语搭出来的。
 
 本仓库同时包含 **NUC 可执行二进制格式（novus-os）** 的读写 / 校验 / dump / 编译工具链，方便把它接入你自己的系统。
 
@@ -112,6 +114,9 @@ make test     # 冒烟：全部样例 + NUC 流水线
 │   ├── json.c           # JSON 解析 / 取值 / 序列化
 │   ├── http.c           # HTTP（http-get / http-download 等，WinINet）
 │   ├── proc.c           # 进程（proc-spawn / proc-run 等）
+│   ├── sha1.c           # SHA-1（sha1-string / sha1-file）
+│   ├── zip.c            # 解压 zip/jar（自带 deflate，无 zlib 依赖）
+│   ├── strutil.c        # 字符串工具（str-split / str-replace）
 │   ├── wm.c             # 窗口原语（Windows: Win32 真窗口；非 Windows: 假 WM）
 │   ├── update.c         # nuomi update 自更新（官方 + 国内镜像回退）
 │   ├── main.c           # REPL / 脚本执行 / -c 编译模式
@@ -208,9 +213,12 @@ nuomi> (sq 9)
 | `(ls dir)`                                                                                  | 列目录 → 文件名列表（不含 `.` `..`；失败 `nil`）                                                    |
 | `(mkdir p)` `(rmdir p)` `(delete p)` `(mv a b)` `(cp a b)`                                  | 建目录 / 删空目录 / 删文件 / 移动 / 复制（返回布尔）                                                     |
 | `(json-parse s)` `(json-get v k...)` `(json-stringify v)` `(json-obj k v...)`               | JSON 解析 / 多层路径取值 / 序列化 / 构造对象                                                        |
-| `(http-get url [ua])` `(http-head url)` `(http-length)` `(http-download url path)` `(http-download-from ...)` | **HTTP**：拉响应体 / 头 / 长度 / 下载落盘（Windows WinINet）                                       |
+| `(http-get url [ua])` `(http-head url)` `(http-length)` `(http-download url path)` `(http-download-many ...)` `(http-download-from ...)` | **HTTP**：拉响应体 / 头 / 长度 / 下载落盘 / 批量并发下载（Windows WinINet）                                       |
 | `(proc-spawn cmd args)` `(proc-read p)` `(proc-read-all p)` `(proc-alive? p)` `(proc-wait p)` `(proc-kill p)` `(proc-close p)` `(proc-run cmd args)` | **进程**：启动 / 读输出 / 存活 / 等待 / 终止 / 一把跑完返回退出码                                          |
-| `(window-create x y w h [title])` 等 11 个 `window-*`                                         | **GUI 窗口**：建窗 / 画图元 / 文字 / 清屏 / 重绘 / 移动 / 标题 / 关闭 / 取键事件（详见下文「窗口 / GUI」）            |
+| `(sha1-string s)` `(sha1-file p)` `(unzip zip dest)`                                       | **SHA-1 校验**（字符串/文件）/ **解压 zip·jar**（自带 deflate，无 zlib 依赖）                            |
+| `(str-split s sep)` `(str-replace s old new)`                                               | 字符串切分（→ 列表）/ 替换                                                                      |
+| `(getenv name)` `(to-number s)`                                                            | 读环境变量 / 字符串转数字                                                                         |
+| `(window-create x y w h [title])` 等 13 个 `window-*`                                        | **GUI 窗口**：建窗 / 画图元 / 文字 / 清屏 / 重绘 / 移动 / 标题 / 关闭 / 取键 / **鼠标点击 / 字符输入**（详见下文） |
 
 值类型：数字（double）、布尔 `true`/`false`、空 `nil`、字符串、符号、链表、向量、函数/闭包。
 
@@ -226,22 +234,26 @@ nuomi> (sq 9)
 
 ### 🪟 窗口 / GUI（Novus-WM）
 
-Nuomi 内置 11 个窗口原语，**Windows 上是真 Win32 窗口**（CreateWindow + GDI 双缓冲），将来 novus 上同一套 API 走 Novus-WM IPC——脚本不用改：
+Nuomi 内置 13 个窗口原语，**Windows 上是真 Win32 窗口**（CreateWindow + GDI 双缓冲 + UTF-8 中文渲染），将来 novus 上同一套 API 走 Novus-WM IPC——脚本不用改：
 
 | 原语 | 作用 |
 | --- | --- |
 | `(window-create x y w h [title])` | 建窗 → 返回窗口号 |
 | `(window-fill win x y w h color)` | 填充矩形（最常用） |
 | `(window-shape win op x y w h color [radius])` | 图元：1 填充 / 2 边框 / 3 横线 / 4 竖线 / 5 圆 / 6 圆角填充 / 7 圆角描边 |
-| `(window-text win x y scale text [color])` | 文字（scale 1/2；第 6 参颜色，默认白） |
+| `(window-text win x y scale text [color])` | 文字（scale 1/2；第 6 参颜色，默认白；**中文正常**） |
 | `(window-clear win)` / `(window-invalidate win)` | 清显示列表（开帧）/ 帧尾重绘 |
 | `(window-move win x y)` `(window-title win "s")` `(window-close win)` | 移动 / 改标题 / 关窗 |
-| `(window-event)` | 非阻塞取键：方向键 `'up` `'down` `'left` `'right`、`'esc`，字母返回 `"r"` 等小写字符串；无键 `nil` |
+| `(window-event)` | 非阻塞取键：方向键 `'up` `'down` `'left` `'right`、`'esc`、`'back`，字母返回 `"r"` 等小写字符串；无键 `nil` |
+| `(window-click [win])` | **鼠标左键点击** → `x*100000+y`（无点击 `nil`） |
+| `(window-char [win])` | **键盘字符**（含中文输入法）→ 单字符字符串 |
 | `(window-trace 0/1)` | 开关宿主消息摘要 |
 
 颜色是 `0xRRGGBB` 的**十进制**写法（Nuomi 不支持 `0x` 字面量），如亮绿 `65280`、紫 `6953882`。
 
 **开箱即玩**：`nuomi samples/snake-wm.nuomi` —— 彩色窗口贪吃蛇（浅蓝棋盘底 / 紫信息条 / 彩虹蛇身，方向键/WASD，R 重开，Esc 退出）。窗口原语示例见 `samples/wm-demo.nuomi`。
+
+> 🐍 **旗舰应用**：[**NuomiLauncher**](https://github.com/Ryan-cpu-lang/NuomiLauncher) —— 用糯米语言写的 Minecraft 启动器（GUI + CLI，离线 Piston API），就是靠上面这批原语（窗口 / SHA-1 / unzip / 进程）搭出来的。
 
 > 实现：Windows 走 `src/wm.c` 的 Win32 后端（真窗口）；novus 真机 IPC 路径待接（`include/novus_wm.h` 已备好协议常量与载荷结构）。文本当前走 ANSI（A 版 API），中文显示待补 UTF-8 转换。
 

@@ -12,7 +12,8 @@ NUC_LIB  := src/nucfmt.c
 # nucutil.c 的 NUC 子命令（dump/validate/emit-demo/run）已并入 nuomi，通过
 # `nuomi nuc <cmd>` 调用，不再单独产出 nucutil 可执行文件。
 LANG_SRC := src/value.c src/reader.c src/env.c src/eval.c src/native.c \
-            src/codegen.c src/update.c src/nucutil.c src/main.c
+            src/codegen.c src/update.c src/nucutil.c src/main.c \
+            src/sha1.c src/zip.c src/strutil.c
 SAMPLES  := $(wildcard samples/*.nuomi)
 
 # fmod 来自 C 数学库，多数主机(Linux)上是独立的，需要 -lm。

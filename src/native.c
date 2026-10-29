@@ -3,6 +3,7 @@
  * native.c — 内置原生函数
  */
 #include "nuomi.h"
+#include <stdlib.h>
 
 /* ---------- 算术 ---------- */
 static Value natAdd(int c, Value* a, Env* e) {
@@ -799,6 +800,26 @@ static Value natCp(int c, Value* a, Env* e) {
 #endif
 }
 
+/* getenv 名字 -> 环境变量值；未设置/空 -> nil
+ *
+ * 用途：启动器要定位用户主目录（Windows 用 USERPROFILE，POSIX 用 HOME），
+ * 以及读取 JVM 需要的代理设置。标准 C getenv 在两个平台都可用，故不需分实现。
+ * 注意：别和终端清屏用的 (home) 混淆——那是光标复位，不是主目录。
+ */
+static Value natGetenv(int c, Value* a, Env* e) {
+    (void)e;
+    if (c < 1 || !IS_OBJ(a[0]) || AS_OBJ(a[0])->type != OBJ_STRING) {
+        runtimeError("getenv expects a variable name");
+        return NIL_VAL;
+    }
+    ObjString* name = (ObjString*)AS_OBJ(a[0]);
+    const char* v = getenv(name->chars);
+    if (!v || !*v) return NIL_VAL;
+    ObjString* s = internString(v, (int)strlen(v), false);
+    retain(OBJ_VAL(s));
+    return OBJ_VAL(s);
+}
+
 /* ls dir -> 文件名列表（不含 . 与 ..）；失败/不是目录 → nil */
 static Value natLs(int c, Value* a, Env* e) {
     (void)e;
@@ -1230,6 +1251,17 @@ void defNative(Env* g, const char* name, NativeFn fn) {
     envDefine(g, s, OBJ_VAL(nat));
 }
 
+/* 字符串 -> 数字(给 GUI 解析进度/配置用) */
+static Value natToNumber(int c, Value* a, Env* e) {
+    (void)c; (void)e;
+    if (c < 1 || !IS_OBJ(a[0])) return NUM_VAL(0);
+    char* s = valueToCString(a[0]);
+    if (!s) return NUM_VAL(0);
+    double v = atof(s);
+    free(s);
+    return NUM_VAL(v);
+}
+
 void registerNatives(Env* g) {
     defNative(g, "+", natAdd);
     defNative(g, "-", natSub);
@@ -1258,6 +1290,7 @@ void registerNatives(Env* g) {
     defNative(g, "set", natSet);
     defNative(g, "vec", natVec);
     defNative(g, "str", natStr);
+    defNative(g, "to-number", natToNumber);
     defNative(g, "input", natInput);
     defNative(g, "input-int", natInputInt);
 
@@ -1283,6 +1316,7 @@ void registerNatives(Env* g) {
     defNative(g, "mv", natMv);
     defNative(g, "cp", natCp);
     defNative(g, "ls", natLs);
+    defNative(g, "getenv", natGetenv);
 
     /* JSON 组单独成文件（src/json.c）：解析器代码量大，混在这里会难维护 */
     registerJsonNatives(g);
@@ -1290,6 +1324,9 @@ void registerNatives(Env* g) {
     registerHttpNatives(g);
     registerProcNatives(g);   /* 进程组单独成文件 */
     registerWmNatives(g);     /* 窗口组单独成文件（src/wm.c） */
+    registerSha1Natives(g);   /* SHA-1 组单独成文件（src/sha1.c） */
+    registerZipNatives(g);    /* ZIP 组单独成文件（src/zip.c） */
+    registerStrUtilNatives(g);/* 字符串工具组单独成文件（src/strutil.c） */
 
     /* 高阶函数与列表工具 */
     defNative(g, "map", natMap);

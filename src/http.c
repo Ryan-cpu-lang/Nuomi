@@ -367,6 +367,189 @@ static Value natHttpLength(int c, Value* a, Env* e) {
     return NUM_VAL((double)len);
 }
 
+/* ---------- 并发下载 ----------
+ *
+ * (http-download-many pairs [threads] [ua]) -> 成功下载的文件个数
+ *
+ *   pairs  : 链表, 每项是 (url . dest) 点对(也接受二元列表 (url dest))
+ *   threads: 并发线程数(默认 8, 上限 64)
+ *   ua     : User-Agent(可选)
+ *
+ * 为什么需要它: Mojang 资源包有 4000+ 个小文件, 串行下载每个都要新建一次
+ * TLS 连接, 实测约 1 个/秒 —— 整包要一个多小时。并发之后能到几十个/秒。
+ *
+ * 线程安全: http_simple() 每次请求都自建/自毁 WinINet 句柄, 请求之间天然隔离;
+ * 只要在开线程之前先调一次 api_get() 把函数指针准备好(避免加载竞态)即可。
+ * 任务用「静态分片」分配(thread i 拿 i, i+N, i+2N …), 不需要原子操作,
+ * 也就不会踩 TCC 对原子内建支持不全的坑。
+ */
+typedef struct {
+    char** urls;
+    char** dests;
+    int    n;
+    int    ok;          /* 成功计数(各线程自增, 各自独占一块区间, 无需原子) */
+    const char* ua;
+    int    threads;
+} DlBatch;
+
+/* 线程参数: 批次 + 本线程的片号(用参数传, 避免 b->next++ 的竞态) */
+typedef struct {
+    DlBatch* batch;
+    int      me;
+} DlArg;
+
+static char* dupCStr(const char* s) {
+    size_t n = strlen(s) + 1;
+    char* p = (char*)malloc(n);
+    if (p) memcpy(p, s, n);
+    return p;
+}
+
+/* 取出一个 (url . dest) 对的两端; 支持点对与二元列表两种写法 */
+static bool pairStrings(Value v, const char** url, const char** dest) {
+    if (!isList(v)) return false;
+    Value a = listCar(v);
+    Value d = listCdr(v);
+    if (isList(d)) {
+        /* 二元列表 (url dest) */
+        Value b = listCar(d);
+        if (!IS_OBJ(a) || AS_OBJ(a)->type != OBJ_STRING) return false;
+        if (!IS_OBJ(b) || AS_OBJ(b)->type != OBJ_STRING) return false;
+        *url  = ((ObjString*)AS_OBJ(a))->chars;
+        *dest = ((ObjString*)AS_OBJ(b))->chars;
+        return true;
+    }
+    /* 点对 (url . dest): car 是 url, cdr 是 dest */
+    if (!IS_OBJ(a) || AS_OBJ(a)->type != OBJ_STRING) return false;
+    if (!IS_OBJ(d) || AS_OBJ(d)->type != OBJ_STRING) return false;
+    *url  = ((ObjString*)AS_OBJ(a))->chars;
+    *dest = ((ObjString*)AS_OBJ(d))->chars;
+    return true;
+}
+
+/* 下载单个任务: 成功返回字节数, 失败返回 -1 */
+static long long downloadOne(const char* url, const char* dest, const char* ua) {
+    HttpResp r;
+    if (!http_request(url, ua, "GET", -1, true, &r)) return -1;
+    if (r.status != 0 && (r.status < 200 || r.status >= 300)) {
+        resp_free(&r);
+        return -1;
+    }
+    FILE* f = fopen(dest, "wb");
+    if (!f) { resp_free(&r); return -1; }
+    size_t wrote = r.bodyLen ? fwrite(r.body, 1, r.bodyLen, f) : 0;
+    fclose(f);
+    size_t total = r.bodyLen;
+    resp_free(&r);
+    return (wrote == total) ? (long long)total : -1;
+}
+
+/* 工作线程: 静态分片, 拿 me, me+N, me+2N …
+ *
+ * ⚠️ 片号必须用线程参数传进来, 不能用共享计数器自增 —— 多个线程同时
+ *    b->next++ 会抢到同一个片号, 导致同一批文件被重复下载(实测 20 个文件
+ *    下了 24 次, 耗时直接翻几倍)。 */
+#if defined(_WIN32)
+static DWORD WINAPI dlWorker(LPVOID p) {
+#else
+static void* dlWorker(void* p) {
+#endif
+    DlArg* arg = (DlArg*)p;
+    DlBatch* b = arg->batch;
+    int me = arg->me;
+    int ok = 0;
+    for (int i = me; i < b->n; i += b->threads) {
+        long long r = downloadOne(b->urls[i], b->dests[i], b->ua);
+        if (r >= 0) ok++;
+    }
+    b->ok += ok;                            /* 各线程独占区间, 无需原子 */
+#if defined(_WIN32)
+    return 0;
+#else
+    return NULL;
+#endif
+}
+
+/* (http-download-many pairs [threads] [ua]) -> 成功个数 */
+static Value natHttpDownloadMany(int c, Value* a, Env* e) {
+    (void)e;
+    if (c < 1) { runtimeError("http-download-many expects (pairs [threads] [user-agent])"); return NIL_VAL; }
+    int n = listLen(a[0]);
+    if (n <= 0) return NUM_VAL(0);
+
+    int threads = 8;
+    const char* ua = NULL;
+    /* 参数位置: pairs, [threads], [ua] —— threads 和 ua 谁在前都认(按类型猜) */
+    for (int i = 1; i < c; i++) {
+        if (IS_NUM(a[i])) threads = (int)AS_NUM(a[i]);
+        else if (IS_OBJ(a[i]) && AS_OBJ(a[i])->type == OBJ_STRING) ua = ((ObjString*)AS_OBJ(a[i]))->chars;
+    }
+    if (threads < 1) threads = 1;
+    if (threads > 64) threads = 64;
+    if (threads > n) threads = n;
+
+    /* 把任务拷成 C 字符串(解释器的 GC 可能回收/移动 ObjString, 不能直接持有指针) */
+    DlBatch b;
+    memset(&b, 0, sizeof b);
+    b.n = n; b.threads = threads; b.ua = ua;
+    b.urls  = (char**)calloc((size_t)n, sizeof(char*));
+    b.dests = (char**)calloc((size_t)n, sizeof(char*));
+    if (!b.urls || !b.dests) {
+        free(b.urls); free(b.dests);
+        runtimeError("http-download-many: out of memory");
+        return NUM_VAL(-1);
+    }
+    int k = 0;
+    for (Value cur = a[0]; isList(cur); cur = listCdr(cur)) {
+        const char* u = NULL; const char* d = NULL;
+        if (pairStrings(listCar(cur), &u, &d)) {
+            b.urls[k]  = dupCStr(u);
+            b.dests[k] = dupCStr(d);
+            if (!b.urls[k] || !b.dests[k]) break;
+            k++;
+        }
+    }
+    b.n = k;
+    if (k <= 0) { free(b.urls); free(b.dests); return NUM_VAL(0); }
+    if (b.threads > b.n) b.threads = b.n;
+
+    /* 先把 API 函数指针准备好, 避免多线程同时触发 LoadLibrary 竞态 */
+    if (!api_get()) {
+        for (int i = 0; i < b.n; i++) { free(b.urls[i]); free(b.dests[i]); }
+        free(b.urls); free(b.dests);
+        runtimeError("http-download-many: no HTTP backend");
+        return NUM_VAL(-1);
+    }
+    (void)http_mode();
+
+#if defined(_WIN32)
+    HANDLE* th = (HANDLE*)calloc((size_t)b.threads, sizeof(HANDLE));
+    DlArg*  args = (DlArg*)calloc((size_t)b.threads, sizeof(DlArg));
+    for (int i = 0; i < b.threads; i++) {
+        args[i].batch = &b; args[i].me = i;
+        th[i] = CreateThread(NULL, 0, dlWorker, &args[i], 0, NULL);
+    }
+    for (int i = 0; i < b.threads; i++)
+        if (th[i]) { WaitForSingleObject(th[i], INFINITE); CloseHandle(th[i]); }
+    free(th); free(args);
+#else
+    pthread_t* th = (pthread_t*)calloc((size_t)b.threads, sizeof(pthread_t));
+    DlArg*  args = (DlArg*)calloc((size_t)b.threads, sizeof(DlArg));
+    for (int i = 0; i < b.threads; i++) {
+        args[i].batch = &b; args[i].me = i;
+        pthread_create(&th[i], NULL, dlWorker, &args[i]);
+    }
+    for (int i = 0; i < b.threads; i++)
+        pthread_join(th[i], NULL);
+    free(th); free(args);
+#endif
+
+    int ok = b.ok;
+    for (int i = 0; i < b.n; i++) { free(b.urls[i]); free(b.dests[i]); }
+    free(b.urls); free(b.dests);
+    return NUM_VAL(ok);
+}
+
 /* (http-download url dest [ua]) -> 下载字节数；失败 -1 */
 static Value natHttpDownload(int c, Value* a, Env* e) {
     (void)e;
@@ -505,6 +688,7 @@ bool nuomi_http_download_to_file(const char* url, const char* dest,
 }
 
 #else  /* ---- 非 Windows：暂未实现（将来接 novus 网络 syscall） ---- */
+#include <pthread.h>
 static Value natHttpGet(int c, Value* a, Env* e) {
     (void)c; (void)a; (void)e;
     runtimeError("http-get: not implemented on this platform yet");
@@ -550,5 +734,6 @@ void registerHttpNatives(Env* g) {
     defNative(g, "http-head", natHttpHead);
     defNative(g, "http-length", natHttpLength);
     defNative(g, "http-download", natHttpDownload);
+    defNative(g, "http-download-many", natHttpDownloadMany);
     defNative(g, "http-download-from", natHttpDownloadFrom);
 }

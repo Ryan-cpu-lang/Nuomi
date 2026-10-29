@@ -271,6 +271,101 @@ Nuomi 的源码就是一堆 **S-表达式（S-expression）**，整体长得像 
 ### 5.11 类型判断
 `(number? x)` `(string? x)` `(list? x)` `(vector? x)` `(function? x)` `(bool? x)`
 
+### 5.12 扩展原语（网络 / JSON / 进程 / 压缩 / 校验）
+
+> 这一组是为了让 Nuomi 能写"真正跑起来"的程序（典型例子：Minecraft 启动器）。
+> 对应源码：`src/http.c` `src/json.c` `src/proc.c` `src/sha1.c` `src/zip.c` `src/strutil.c`。
+
+**网络（Windows 走 WinHTTP，POSIX 走 libcurl）**
+
+| 函数 | 语义 |
+|------|------|
+| `(http-get url [ua])` | GET 取正文，返回字符串；失败返回 `nil` |
+| `(http-head url [ua])` | 只取响应头，返回字符串 |
+| `(http-length url [ua])` | 取 `Content-Length`，返回数字 |
+| `(http-download url dest [ua])` | 下载到文件，返回字节数；失败返回 `-1`（**不会自动建父目录**） |
+| `(http-download-from url dest offset [ua])` | 断点续传：从 `offset` 处接着写 |
+| `(http-download-many pairs [threads] [ua])` | **并发**下载一批文件，返回成功个数 |
+
+> `ua` 是 User-Agent，很多 CDN 会拒掉空 UA 的请求。
+
+**关于 `http-download-many` 的实测（重要，别想当然）**
+
+`pairs` 是链表，每项可以是 `(url . dest)` 点对或 `(url dest)` 二元列表；
+`threads` 默认 8、上限 64。
+
+⚠️ **在 Windows 上它比串行还慢**（实测 20 个小文件：并发 8 线程 24 秒 vs 串行 6 秒）。
+原因：底层走 WinINet，**多线程请求被 WinINet 内部全局锁串行化**，
+而且每次请求都 `InternetOpen` 新建 session，session 初始化也在锁里 → 并发反而更慢。
+（另外这条通道的 `NUOMI_HTTP_MODE=advanced`（WinHTTP）在本机直接失效，
+  将来修好 WinHTTP 通道或改用 `curl --parallel` 才是正解。）
+
+**功能本身是正确的**（20/20 下载成功、无重复、无缺文件），可以放心用，
+只是别指望它提速。
+
+**JSON**
+
+| 函数 | 语义 |
+|------|------|
+| `(json-parse text)` | 解析 JSON 文本；失败返回 `nil` |
+| `(json-get obj key…)` | 按路径取值，支持多层（`obj "a" "b" 0`） |
+| `(json-stringify v)` | 反序列化成 JSON 文本 |
+| `(json-obj k v k v…)` | 造一个 JSON 对象（参数个数须为偶数） |
+
+**内部表示（重要）**：
+- JSON **对象** → 点对 alist `((("a" . 1) ("b" ("c" . 2))))`，遍历时 `car e` 是键、`cdr e` 是值
+- JSON **数组** → 向量，用 `get` / `nth` 取下标
+
+```nuomi
+(define j (json-parse "{\"a\":1,\"b\":{\"c\":[10,20]}}"))
+(json-get j "b" "c" 1)        ;=> 20
+(json-get j "a")              ;=> 1
+```
+
+**进程**
+
+| 函数 | 语义 |
+|------|------|
+| `(proc-spawn cmd args-list)` | 启动进程，返回句柄 |
+| `(proc-run cmd args-list)` | 启动并等待结束 |
+| `(proc-read h)` / `(proc-read-all h)` | 读子进程输出 |
+| `(proc-alive? h)` / `(proc-wait h)` / `(proc-kill h)` / `(proc-close h)` | 进程控制 |
+
+> ⚠️ `args-list` 必须是**字符串链表**，且每个元素都是字符串（内部按 `listCar`/`listCdr` 逐个取，会跳过非字符串）。
+
+**压缩与校验**
+
+| 函数 | 语义 |
+|------|------|
+| `(sha1-string s)` | SHA1 十六进制摘要（40 位小写） |
+| `(sha1-file path)` | 文件的 SHA1；文件打不开返回 `nil` |
+| `(unzip archive dest)` | 解压 zip/jar 到 `dest`，返回解出的条目数；失败 `-1` |
+
+> `unzip` 自带 deflate 解码器（RFC 1951，stored / fixed / dynamic Huffman 全支持），**无 zlib 依赖**。
+> 会自动建目录（含子目录），并跳过含 `..` 的条目（防 zip slip）。
+
+**字符串补充**
+
+| 函数 | 语义 |
+|------|------|
+| `(str-split s sep)` | 按 `sep` 切分，返回链表 |
+| `(str-replace s old new)` | 替换所有 `old` 为 `new`（三个参数都必须是字符串） |
+
+**环境变量**
+
+| 函数 | 语义 |
+|------|------|
+| `(getenv name)` | 读环境变量；未设置或为空返回 `nil` |
+
+```nuomi
+(getenv "USERPROFILE")   ; Windows 用户主目录
+(getenv "HOME")          ; POSIX 用户主目录
+```
+
+> ⚠️ **`(home)` 不是"取主目录"**！它是「光标复位 + 隐藏光标」的终端指令
+> （Windows 下 `SetConsoleCursorPosition` + 隐藏光标，POSIX 下打印 ANSI 转义序列），
+> **恒返回 `nil`**。要用户主目录请用 `(getenv "USERPROFILE")` / `(getenv "HOME")`。
+
 ---
 
 ## 6. 函数与闭包
