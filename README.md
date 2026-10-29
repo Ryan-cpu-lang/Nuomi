@@ -1,8 +1,10 @@
-# Nuomi —— 一门纯 C 制作的极简编程语言 + NUC 工具链
+# Nuomi —— 纯 C 极简 Lisp 语言 + NUC 工具链 + GUI 窗口
 
 Nuomi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从零实现（树遍历解释器 + 引用计数 GC）。
-  
-本仓库同时包含 **NUC 可执行二进制格式（novus-os）** 的读写 / 校验 / dump 工具链，方便把它接入你自己的系统。
+
+内置 **窗口 / GUI 原语**（Windows 上是真 Win32 窗口，将来 novus 上走 Novus-WM IPC）——窗口版贪吃蛇 `samples/snake-wm.nuomi` 开箱即玩；另有 **HTTP / 进程 / JSON / 文件** 等应用层原语。
+
+本仓库同时包含 **NUC 可执行二进制格式（novus-os）** 的读写 / 校验 / dump / 编译工具链，方便把它接入你自己的系统。
 
 > NUC 规范基准：<https://github.com/chen-xin-Liam/novus-os/blob/main/docs/NUC%20%E5%8F%AF%E6%89%A7%E8%A1%8C%E4%BA%8C%E8%BF%9B%E5%88%B6%E6%A0%BC%E5%BC%8F%E8%A7%84%E8%8C%83%20V1.0.md>
 >
@@ -14,14 +16,15 @@ Nuomi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从�
 
 ## 📥 下载（Windows / Novus / Linux）
 
-> 当前版本：**v0.3.0**（Route-A M3 里程碑）—— 解释器全功能；编译器支持 整数 / 函数(递归) / 局部变量 / if·while / 比较 / **let·let*·letrec** / **字符串字面量** / **print·println（走 syscall write）** → `.nuc`
+> 当前版本：**v0.3.0** —— 解释器全功能（含 **窗口 GUI** / HTTP / 进程 / JSON / 文件 / 实时游戏原语）；编译器（Route A）支持 整数 / 函数(递归) / 局部变量 / if·while / 比较 / let·let*·letrec / 字符串字面量 / **print·println（走 syscall write）** → `.nuc`
 
 ### 🪟 Windows
 
 1. 下载本仓库（Code → Download ZIP，或 `git clone`）
 2. 双击 **`build.bat`**（自动探测 clang / gcc / 绿色版 TCC）→ 得到单一 `nuomi.exe`（已内置 NUC 工具链，用 `nuomi nuc` 调用）
 3. 双击 **`run-guess.bat`** 玩猜数字、**`run-games.bat`** 看游戏合集
-4. （可选）双击 **`make-shortcuts.bat`** 生成带 Nuomi 图标的快捷方式
+4. `nuomi samples/snake-wm.nuomi` —— 弹出**真窗口**的彩色贪吃蛇（Win32 后端；方向键/WASD 移动、R 重开、Esc 退出）
+5. （可选）双击 **`make-shortcuts.bat`** 生成带 Nuomi 图标的快捷方式
 
 💾 **不想自己编译？**&#x76F4;接下载预编译版（Windows x64，单一文件）：\*\*[`nuomi.exe`](https://github.com/Ryan-cpu-lang/Nuomi/releases/download/v0.3.0/nuomi.exe)（来自 [Release v0.3.0](https://github.com/Ryan-cpu-lang/Nuomi/releases/tag/v0.3.0)）—— 解释器、编译后端、NUC 工具链都在这一个 exe 里，用 `nuomi nuc` 调用 NUC 命令。
 
@@ -41,6 +44,7 @@ nuomi update --check   # 只检查、不下载
 - 替换的是**当前正在运行的 nuomi.exe**（自动用 `GetModuleFileName` 定位自身），因此无论你是安装版（`%LOCALAPPDATA%\Programs\Nuomi`）还是便携版，跑 `nuomi update` 都更新对应的那份。
 - 当前进程仍是旧版本，**重启 nuomi 后生效**。
 - 开发 / 自托管：`nuomi update --url <api地址>` 可指向自定义更新源；`nuomi update --exe <路径>` 可指定更新目标（测试用）。
+- 🇨🇳 **国内直连 `api.github.com` 被墙？** update 会自动回退到 ghproxy 系镜像（ghproxy.net / ghfast.top / gh-proxy.com）重试，查询与下载都走镜像。镜像列表在 `src/update.c` 的 `NUOMI_UPDATE_PROXIES`，失效可增删。
 
 #### 📦 一键安装（推荐）：装完 cmd 里直接打 `nuomi`
 
@@ -98,23 +102,31 @@ make test     # 冒烟：全部样例 + NUC 流水线
 
 ```
 .
-├── include/             # nuomi.h / nucfmt.h / codegen.h
+├── include/             # nuomi.h / nucfmt.h / codegen.h / novus_syscall.h / novus_wm.h
 ├── src/
 │   ├── value.c          # 引用计数 GC、字符串驻留、值打印
 │   ├── reader.c         # 读取器（S 表达式 / 向量 / 引号）
 │   ├── env.c            # 作用域环境
 │   ├── eval.c           # 求值器、特殊形式、闭包、apply
-│   ├── native.c         # 内置原生函数（含 input / input-int）
+│   ├── native.c         # 内置原语总注册（defNative）
+│   ├── json.c           # JSON 解析 / 取值 / 序列化
+│   ├── http.c           # HTTP（http-get / http-download 等，WinINet）
+│   ├── proc.c           # 进程（proc-spawn / proc-run 等）
+│   ├── wm.c             # 窗口原语（Windows: Win32 真窗口；非 Windows: 假 WM）
+│   ├── update.c         # nuomi update 自更新（官方 + 国内镜像回退）
 │   ├── main.c           # REPL / 脚本执行 / -c 编译模式
 │   ├── codegen.c        # Route-A 编译后端（Nuomi 子集 → x86_64 → .nuc）
 │   ├── nucfmt.c         # NUC 格式：构建 / 解析 / 校验 / dump
-│   └── nucutil.c        # NUC 工具链（已并入 nuomi.exe，用 `nuomi nuc` 调用：emit/validate/dump/run）
-├── samples/             # Nuomi 示例程序（.nuomi，可解释运行）
+│   └── nucutil.c        # NUC 工具链（已并入 nuomi.exe，用 `nuomi nuc` 调用）
+├── samples/             # 示例 22 个：snake-wm.nuomi（窗口贪吃蛇）/ wm-demo.nuomi / snake.nuomi ...
+├── installer/           # Inno Setup 安装包（Nuomi.iss：文件关联 + PATH + 开始菜单）
 ├── dist/novus/          # 预编译示例 .nuc（诺维斯渠道）+ 源码
+├── dist/windows/        # 预编译 nuomi.exe（入库交付物）
 ├── tools/               # gen-icon.py / make-shortcuts.ps1
 ├── docs/                # Nuomi 语言规范（权威）
 ├── Makefile             # Linux/macOS 构建（make / make test）
-├── build.bat            # Windows 一键构建
+├── build.bat            # Windows 一键构建（clang / gcc / TCC）
+├── nuomi-file-assoc.reg # 便携版文件关联（.nuomi / .nuc，不装安装包时用）
 ├── run-games.bat        # 双击：游戏合集
 ├── run-guess.bat        # 双击：猜数字
 ├── make-shortcuts.bat   # 双击：生成带图标快捷方式
@@ -196,6 +208,9 @@ nuomi> (sq 9)
 | `(ls dir)`                                                                                  | 列目录 → 文件名列表（不含 `.` `..`；失败 `nil`）                                                    |
 | `(mkdir p)` `(rmdir p)` `(delete p)` `(mv a b)` `(cp a b)`                                  | 建目录 / 删空目录 / 删文件 / 移动 / 复制（返回布尔）                                                     |
 | `(json-parse s)` `(json-get v k...)` `(json-stringify v)` `(json-obj k v...)`               | JSON 解析 / 多层路径取值 / 序列化 / 构造对象                                                        |
+| `(http-get url [ua])` `(http-head url)` `(http-length)` `(http-download url path)` `(http-download-from ...)` | **HTTP**：拉响应体 / 头 / 长度 / 下载落盘（Windows WinINet）                                       |
+| `(proc-spawn cmd args)` `(proc-read p)` `(proc-read-all p)` `(proc-alive? p)` `(proc-wait p)` `(proc-kill p)` `(proc-close p)` `(proc-run cmd args)` | **进程**：启动 / 读输出 / 存活 / 等待 / 终止 / 一把跑完返回退出码                                          |
+| `(window-create x y w h [title])` 等 11 个 `window-*`                                         | **GUI 窗口**：建窗 / 画图元 / 文字 / 清屏 / 重绘 / 移动 / 标题 / 关闭 / 取键事件（详见下文「窗口 / GUI」）            |
 
 值类型：数字（double）、布尔 `true`/`false`、空 `nil`、字符串、符号、链表、向量、函数/闭包。
 
@@ -208,6 +223,27 @@ nuomi> (sq 9)
 > 📁 **文件系统**：糯米在 novus 上是**用户级应用语言**（团队定位：专注应用层、不当系统 shell，图形化窗口走 Novus-WM 协议），文件操作是基本功。宿主用 Win32 API、其他平台 POSIX，将来上 novus 换 syscall、**脚本接口不变**。软错误语义：失败返回 `nil`/`false`/`-1`，不中止程序。**故意不提供递归删除**——`rm -rf` 请用 `ls`+`delete`+`rmdir` 在脚本层自己组合（`samples/files.nuomi` 有 6 行实现）。这是真实破坏力，删了不可恢复。
 >
 > 💡 **游戏防闪烁三件套**（`samples/snake.nuomi` 实测有效）：每帧**不要** `cls` 清屏（抹全屏就是闪瞎眼的根因）——用 `home` 只把光标移回左上角，所有行等宽重绘自然覆盖旧画面；再把整帧拼成**一个**字符串用 `draw` 一次写出，控制台整帧呈现，不会看到画到一半的半成品。
+
+### 🪟 窗口 / GUI（Novus-WM）
+
+Nuomi 内置 11 个窗口原语，**Windows 上是真 Win32 窗口**（CreateWindow + GDI 双缓冲），将来 novus 上同一套 API 走 Novus-WM IPC——脚本不用改：
+
+| 原语 | 作用 |
+| --- | --- |
+| `(window-create x y w h [title])` | 建窗 → 返回窗口号 |
+| `(window-fill win x y w h color)` | 填充矩形（最常用） |
+| `(window-shape win op x y w h color [radius])` | 图元：1 填充 / 2 边框 / 3 横线 / 4 竖线 / 5 圆 / 6 圆角填充 / 7 圆角描边 |
+| `(window-text win x y scale text [color])` | 文字（scale 1/2；第 6 参颜色，默认白） |
+| `(window-clear win)` / `(window-invalidate win)` | 清显示列表（开帧）/ 帧尾重绘 |
+| `(window-move win x y)` `(window-title win "s")` `(window-close win)` | 移动 / 改标题 / 关窗 |
+| `(window-event)` | 非阻塞取键：方向键 `'up` `'down` `'left` `'right`、`'esc`，字母返回 `"r"` 等小写字符串；无键 `nil` |
+| `(window-trace 0/1)` | 开关宿主消息摘要 |
+
+颜色是 `0xRRGGBB` 的**十进制**写法（Nuomi 不支持 `0x` 字面量），如亮绿 `65280`、紫 `6953882`。
+
+**开箱即玩**：`nuomi samples/snake-wm.nuomi` —— 彩色窗口贪吃蛇（浅蓝棋盘底 / 紫信息条 / 彩虹蛇身，方向键/WASD，R 重开，Esc 退出）。窗口原语示例见 `samples/wm-demo.nuomi`。
+
+> 实现：Windows 走 `src/wm.c` 的 Win32 后端（真窗口）；novus 真机 IPC 路径待接（`include/novus_wm.h` 已备好协议常量与载荷结构）。文本当前走 ANSI（A 版 API），中文显示待补 UTF-8 转换。
 
 ### 📋 JSON 与「糯米写启动器」路线图
 
@@ -228,12 +264,12 @@ nuomi> (sq 9)
 | --------------------------- | --------- |
 | 文件操作（下载落盘、管理版本目录）           | ✅ 12 个原语  |
 | JSON（读懂版本清单 / Modrinth API） | ✅         |
-| **HTTP 请求**（拉清单、下载文件）       | ⬜ 下一块     |
-| **进程启动**（spawn java、传参、抓日志） | ⬜         |
+| **HTTP 请求**（拉清单、下载文件）       | ✅ http-get 等 5 原语 |
+| **进程启动**（spawn java、传参、抓日志） | ✅ proc-* 8 原语   |
 | ZIP（解压 mods / natives）      | ⬜         |
 | SHA-1（文件完整性校验）              | ⬜         |
 | 并发下载                        | ⬜ 当前单线程串行 |
-| **GUI 窗口**（Novus-WM：建窗/画图元/文字/事件） | ⬜ 规划中（liam 建议，走内核 IPC） |
+| **GUI 窗口**（建窗/画图元/文字/事件）    | ✅ Windows 真窗口（贪吃蛇可玩）｜⬜ novus 真机 IPC |
 
 > **递归深度**：约 3700+ 层函数递归安全可用（早期版本约 500 层即栈溢出）；超出会输出可读报错 `maximum recursion depth exceeded` 并终止，不会崩溃。
 
@@ -277,15 +313,13 @@ nuomi nuc run demo.nuc        # 应输出：entry returned: 42 (0x2A)
 
 `emit-demo` 产出的 `demo.nuc`：`.text` 里 `call main` 用 `R_X86_64_PC32` 重定位，加载器解析后跳到 `main`（`mov eax,0x2A; ret`），所以执行返回 42——这同时验证了 **格式生成 → 重定位 → 真机执行** 全链路。
 
-## 5. 下一步：让 Nuomi 真正产出 NUC 运行在 novus-os
+## 5. Route A 编译后端（已落地）：Nuomi → .nuc → novus-os
 
-目前 Nuomi 是**解释执行**（在宿主上直接跑源码），NUC 格式本身由 `nuomi nuc` 工具链负责。
-要让 Nuomi 程序作为 `.nuc` 在 novus-os 上跑，需要做编译后端，两条路线：
+已选定**路线 A（原生代码生成）**并落地：`nuomi -c 程序.nuomi -o 程序.nuc` 把 Nuomi 子集直编成 x86_64 机器码塞进 `.text`（`src/codegen.c`），产物与 liam 官方 `DEMO.NUC` 逐字段对齐（`NUC!` / abi 1.0 / TEXT@0x400000 / entry_rip 一致，互操作实证）。
 
-- **路线 A（原生代码生成）**：把 Nuomi 直接编译成 x86_64 机器码塞进 `.text`，对齐你们 `cppcc` 的 syscall ABI。最贴近原生、性能最好，但工作量最大（寄存器分配、指令选择、系统调用）。
-- **路线 B（内嵌字节码 VM）**：把 Nuomi 编译成紧凑字节码，把一个小型字节码解释器（用 C 写、由 `cppcc` 编成 `.nuc`）作为运行时，字节码放进 `.data`，入口跳到 VM。实现快、可移植，先让语言在系统上跑起来。
-
-告诉我你们倾向哪条路线，我接着往下做。
+- **已支持**：整数 / 函数(递归) / 局部变量 / if·while / 比较 / let·let*·letrec / 字符串字面量 / **print·println**（syscall `write`；号表与入口按官方《Novus-WM 与 IPC 协议规范 V1.0》扶正——`syscall` 指令、第 4 参 `r10`、write=2 / exit=60）
+- **待接 novus 真机**：文件 I/O（open/read/... 号已有，待内核确认实现）、delete/mv（缺 unlink/rename syscall）、窗口（IPC 路径）
+- 验证：`nuomi nuc dump`（格式）/ `nuomi nuc run`（宿主真机执行）；`(print "hi")` 产物已端到端验证符合官方 ABI
 
 ## 6. 已知限制
 
@@ -314,19 +348,15 @@ nuomi nuc run demo.nuc        # 应输出：entry returned: 42 (0x2A)
 2. 对应 `Kconfig` 里 `source` 本目录的 `Kconfig`（见本仓库 `Kconfig`）；
 3. 构建：`make`（交叉编译 `CROSS_COMPILE=x86_64-elf-`，默认 `gcc`）。
 
-### 7.3 ⚠️ 必须跟系统制作人确认的一处规范矛盾
+### 7.3 ✅ 规范矛盾已解决（2026-10-24 实锤）
 
-- novus-os **README** 写的是："内核内置 **Nuc 字节码执行引擎**，无独立 nucvm"。
-- 但**冻结的 NUC 规范 V1.0**（唯一基准文档）明确：`.text` 段装的是 **x86_64 原生机器码**，
-  重定位类型是 `R_X86_64_32` / `R_X86_64_PC32`，加载流程是"上下文切换到用户态，跳转 entry_rip"。
+- 此前 novus-os **README** 写"内核内置 Nuc 字节码执行引擎"，与 **NUC 规范 V1.0**（`.text` = x86_64 原生机器码）矛盾。
+- 解析官方 `novus-live_v0.1.56` ISO 里 liam 产的 `DEMO.NUC`：`.text` 是标准 x86_64 指令流（`call`/`syscall`/`ret`，write+exit 序列），重定位 `R_X86_64_PC32/32`，完全符合**规范 V1.0 原生码路线**。
+- **结论：规范 V1.0 赢，Route A（原生码）方向正确**；novus README 的"字节码引擎"说法过时。Nuomi 的 `nucutil` 已能无缝解析官方 `DEMO.NUC`（互操作实证）。
 
-两者自相矛盾。Nuomi 后端目前按**规范**走原生机器码（Route A，x86_64 直编 `.text`），
-已验证算术用例全对。合入前请系统制作人拍板：内核加载器到底执行原生码还是字节码，
-以免我们对齐错方向。
+### 7.4 当前进度（2026-10 更新）
 
-### 7.4 当前进度
-
-- 解释器：引用计数 UAF 已修复并连跑验证通过；9 个样例全过。
+- 解释器：全功能（窗口 GUI / HTTP / 进程 / JSON / 文件 / 实时游戏原语），窗口贪吃蛇实测稳跑 2 小时+ 无崩溃。
 - NUC 工具链：`emit-demo → validate → dump → run` 全通，`run` 返回 42 (0x2A)。
-- 后端 Route A 垂直切片：x86_64 直编 `.text`，算术 10 组用例全对（含嵌套/减法/大整数/符号引用）。
-- 待做：函数调用 + 运行时（GC、内置函数）、控制流、字符串/向量/闭包、对接 novus-os 系统调用 ABI。
+- Route A 后端：函数/控制流/字符串/print(syscall write) 已编通，产物与官方 DEMO.NUC 格式对齐。
+- 待做：文件 I/O 与窗口的 novus 真机 IPC 路径；编译子集继续追平解释器。
