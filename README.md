@@ -255,7 +255,7 @@ Nuomi 内置 13 个窗口原语，**Windows 上是真 Win32 窗口**（CreateWin
 
 > 🐍 **旗舰应用**：[**NuomiLauncher**](https://github.com/Ryan-cpu-lang/NuomiLauncher) —— 用糯米语言写的 Minecraft 启动器（GUI + CLI，离线 Piston API），就是靠上面这批原语（窗口 / SHA-1 / unzip / 进程）搭出来的。
 
-> 实现：Windows 走 `src/wm.c` 的 Win32 后端（真窗口）；novus 真机 IPC 路径待接（`include/novus_wm.h` 已备好协议常量与载荷结构）。文本当前走 ANSI（A 版 API），中文显示待补 UTF-8 转换。
+> 实现：Windows 走 `src/wm.c` 的 Win32 后端（真窗口）；novus 真机 IPC 路径待接（`include/novus_wm.h` 已备好协议常量与载荷结构）。**2026-11-05 从启动器分叉回流两处修复**：① 字符串字面量补齐 `\r` 转义（此前 `"\r"` 会退化成字面 `r`，导致 `str-replace s "\r" ""` 把所有字母 r 删掉）；② 标题栏改 `CreateWindowExW` / `SetWindowTextW` + `utf8_to_wcs`，中文标题不再乱码。窗口主体文字一直是 `TextOutW`，消息泵仍是 `PeekMessageA`。
 
 ### 📋 JSON 与「糯米写启动器」路线图
 

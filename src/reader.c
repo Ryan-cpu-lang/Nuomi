@@ -132,6 +132,8 @@ static Value readString(Reader* r, const char* closeTok, size_t closeLen) {
             char nx = r->src[++i];
             if (nx == 'n') buf[j++] = '\n';
             else if (nx == 't') buf[j++] = '\t';
+            else if (nx == 'r') buf[j++] = '\r';   /* 缺失会让 "\r" 退化成字面 'r'，
+                                                      str-replace s "\r" "" 会删掉所有字母 r */
             else if (nx == '"') buf[j++] = '"';
             else if (nx == '\\') buf[j++] = '\\';
             else buf[j++] = nx;

@@ -6,10 +6,11 @@
  *       （include/novus_wm.h + 规范 V1.0）。
  *
  * 三套后端：
- *   ① Windows（#ifdef _WIN32）：**Win32 真窗口**——CreateWindowExA 建窗、GDI 双缓冲
+ *   ① Windows（#ifdef _WIN32）：**Win32 真窗口**——CreateWindowExW 建窗、GDI 双缓冲
  *      绘制（fill/frame/circle/round/text）、消息泵嵌进 window-event、方向键映射符号。
- *      文本走 A 版 API（ANSI）：ASCII 完美；中文需 UTF-8→GBK/Wide 转换，TCC 的
- *      winnls.h 不全，暂不支持（待换带完整 SDK 的编译器再补）。
+ *      窗口主体文字走 TextOutW，标题栏走 CreateWindowExW/SetWindowTextW，
+ *      统一用 utf8_to_wcs() 把 UTF-8 转 wchar_t，中文可正常显示。
+ *      消息泵仍是 PeekMessageA/DispatchMessageA，WM_CHAR 的字节语义不变。
  *   ② 其它宿主（#else）：内存"假 WM"，消息摘要打 stderr，event 恒 nil。
  *   ③ 真机 novus（⬜ 待接）：内核 ipc_lookup("nwm") + ipc_send/ipc_recv，NIPC 头由
  *      内核填，客户端只构造 type+载荷。需 codegen/nucutil 发射 ipc syscall。
@@ -209,21 +210,26 @@ static Value w32Create(int c, Value* a, Env* e) {
     W->w = (int)AS_NUM(a[2]); W->h = (int)AS_NUM(a[3]);
     char title[128] = "Nuomi";
     if (c >= 5 && IS_OBJ(a[4])) { char* t = valueToCString(a[4]); if (t){ strncpy(title,t,127); title[127]=0; free(t);} }
+    /* 标题栏走宽字符：A 版 API 会把 UTF-8 字节按 GBK 解释，中文标题必乱码。
+       窗口主体文字一直用 TextOutW，本来就是正常的。消息泵仍是 PeekMessageA，
+       WM_CHAR 的字节语义不变。 */
+    wchar_t wtitle[128]; utf8_to_wcs(title, wtitle, 128);
     if (!g_w32_class) {
-        WNDCLASSEXA wc; memset(&wc,0,sizeof wc);
+        WNDCLASSEXW wc; memset(&wc,0,sizeof wc);
         wc.cbSize = sizeof wc; wc.lpfnWndProc = w32_wndproc;
-        wc.hInstance = GetModuleHandleA(NULL); wc.lpszClassName = "NuomiWMClass";
-        wc.hCursor = LoadCursorA(NULL, IDC_ARROW);
+        wc.hInstance = GetModuleHandleW(NULL); wc.lpszClassName = L"NuomiWMClass";
+        wc.hCursor = LoadCursorA(NULL, IDC_ARROW);  /* 光标句柄与 ANSI/Unicode 无关，
+                                                      TCC 头文件里 W 版声明缺失会报警告 */
         wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
-        RegisterClassExA(&wc); g_w32_class = 1;
+        RegisterClassExW(&wc); g_w32_class = 1;
     }
     DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX; /* 固定大小 */
     RECT rc = {0, 0, W->w, W->h};
     AdjustWindowRectEx(&rc, style, FALSE, 0);
     int ww = rc.right - rc.left, wh = rc.bottom - rc.top;
-    HWND hwnd = CreateWindowExA(0, "NuomiWMClass", title, style,
+    HWND hwnd = CreateWindowExW(0, L"NuomiWMClass", wtitle, style,
                                 (int)AS_NUM(a[0]), (int)AS_NUM(a[1]), ww, wh,
-                                NULL, NULL, GetModuleHandleA(NULL), W);
+                                NULL, NULL, GetModuleHandleW(NULL), W);
     if (!hwnd) { W->used = 0; free(W->dl); W->dl = NULL; runtimeError("window-create: CreateWindow failed"); return NIL_VAL; }
     W->hwnd = hwnd; g_w32_cur = W->id;
     ShowWindow(hwnd, SW_SHOW); UpdateWindow(hwnd); w32_pump();
@@ -316,7 +322,7 @@ static Value w32Title(int c, Value* a, Env* e) {
     W32Win* W = w32_win(c, a);
     if (!W) { runtimeError("window-title: unknown window"); return NIL_VAL; }
     char* t = valueToCString(a[1]);
-    if (t) { SetWindowTextA(W->hwnd, t); free(t); }
+    if (t) { wchar_t wt[256]; utf8_to_wcs(t, wt, 256); SetWindowTextW(W->hwnd, wt); free(t); }
     return NIL_VAL;
 }
 
