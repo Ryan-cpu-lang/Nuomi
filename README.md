@@ -278,10 +278,12 @@ Nuomi 内置 13 个窗口原语，**Windows 上是真 Win32 窗口**（CreateWin
 | JSON（读懂版本清单 / Modrinth API） | ✅         |
 | **HTTP 请求**（拉清单、下载文件）       | ✅ http-get 等 5 原语 |
 | **进程启动**（spawn java、传参、抓日志） | ✅ proc-* 8 原语   |
-| ZIP（解压 mods / natives）      | ⬜         |
-| SHA-1（文件完整性校验）              | ⬜         |
-| 并发下载                        | ⬜ 当前单线程串行 |
+| ZIP（解压 natives / 资源）       | ✅ unzip 原语（启动器已解压 natives/库）｜mods 待做 |
+| SHA-1（文件完整性校验）              | ✅ sha1-file（启动器资源校验已用） |
+| 并发下载                        | ✅ 改用系统 `curl --parallel`（并发 24）；Nuomi 自带 `http-download-many` 因 WinINet 全局锁实测慢 4 倍，弃用 |
 | **GUI 窗口**（建窗/画图元/文字/事件）    | ✅ Windows 真窗口（贪吃蛇可玩）｜⬜ novus 真机 IPC |
+
+> 🎉 以上带 ✅ 的原语已全部由 [NuomiLauncher](https://github.com/Ryan-cpu-lang/NuomiLauncher) 实证可用 —— GUI + CLI 离线 Piston API 真拉起 Minecraft 1.21.4（资源并发下载 + SHA-1 全量校验零失败）。
 
 > **递归深度**：约 3700+ 层函数递归安全可用（早期版本约 500 层即栈溢出）；超出会输出可读报错 `maximum recursion depth exceeded` 并终止，不会崩溃。
 
