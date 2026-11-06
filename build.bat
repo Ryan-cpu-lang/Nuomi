@@ -33,5 +33,15 @@ where python >nul 2>nul && python tools\embed-icon.py nuomi.exe nuomi.ico >nul 2
   echo [build] synced dist\windows\nuomi.exe
 ) || echo [build] (skipped icon embed: python not found)
 
-echo [build] OK: nuomi.exe （单一文件，已含 NUC 工具链）
+rem ---- nuomiw.exe: GUI subsystem twin, no console window ----
+rem Same binary + icon as nuomi.exe; only the PE Subsystem field is flipped
+rem CUI(3) -> GUI(2) by make-windowed.py. Used by the launcher GUI so that
+rem double-clicking does not spawn a black cmd box. nuomi.exe stays console.
+where python >nul 2>nul && python tools\make-windowed.py nuomi.exe nuomiw.exe && (
+  if not exist dist\windows mkdir dist\windows
+  copy /Y nuomiw.exe dist\windows\nuomiw.exe >nul
+  echo [build] synced dist\windows\nuomiw.exe
+) || echo [build] (skipped nuomiw.exe: python not found)
+
+echo [build] OK: nuomi.exe + nuomiw.exe (NUC toolchain included)
 endlocal

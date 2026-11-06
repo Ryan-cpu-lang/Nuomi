@@ -151,7 +151,17 @@ static Value natProcSpawn(int c, Value* a, Env* e) {
     memset(&si, 0, sizeof si);
     si.cb = sizeof si;
     si.dwFlags = STARTF_USESTDHANDLES;
+    /* GUI 版(nuomiw.exe)没有控制台，GetStdHandle 会返回 NULL/INVALID。
+     * STARTF_USESTDHANDLES 下把无效 stdin 交给子进程可能导致 CreateProcess
+     * 失败，这里退化成 NUL 设备句柄，保证 curl / java / powershell 都能起。 */
+    HANDLE nulIn = NULL;
     si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    if (si.hStdInput == NULL || si.hStdInput == INVALID_HANDLE_VALUE) {
+        HANDLE nul = CreateFileA("NUL", GENERIC_READ,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+                                 OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (nul != INVALID_HANDLE_VALUE) { nulIn = nul; si.hStdInput = nul; }
+    }
     si.hStdOutput = wp;
     si.hStdError  = wp;
 
@@ -161,11 +171,15 @@ static Value natProcSpawn(int c, Value* a, Env* e) {
         cmdLine,        /* 可写的命令行缓冲 */
         NULL, NULL,     /* 默认安全属性 */
         TRUE,           /* 继承句柄（管道需要） */
-        0,              /* 无特殊标志 */
+        /* 子进程一律不开控制台窗口：curl / java / powershell / cmd 都是 console
+         * 程序，不加这个标志时每个都会弹一个黑框（GUI 子系统下尤其明显）。
+         * stdout/stderr 已由上面的匿名管道接管，输出照常能读回。 */
+        CREATE_NO_WINDOW,
         NULL,           /* 用父进程环境 */
         NULL,           /* 用父进程工作目录 */
         &si, &s->pi);
     free(cmdLine);
+    if (nulIn) CloseHandle(nulIn);   /* 子进程已继承，父进程这端可以关 */
 
     /* 父进程不需要写端，立刻关掉（否则读不到 EOF） */
     CloseHandle(wp);

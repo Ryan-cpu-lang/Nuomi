@@ -23,13 +23,24 @@ Nuomi 是一门参考 Scheme / Clojure 的 **Lisp 风格**语言，用纯 C 从�
 ### 🪟 Windows
 
 1. 下载本仓库（Code → Download ZIP，或 `git clone`）
-2. 双击 **`build.bat`**（自动探测 clang / gcc / 绿色版 TCC）→ 得到单一 `nuomi.exe`（已内置 NUC 工具链，用 `nuomi nuc` 调用）
+2. 双击 **`build.bat`**（自动探测 clang / gcc / 绿色版 TCC）→ 得到 `nuomi.exe`（CONSOLE 版）＋ `nuomiw.exe`（GUI 版），两者都已内置 NUC 工具链（用 `nuomi nuc` 调用）
 3. 双击 **`run-guess.bat`** 玩猜数字、**`run-games.bat`** 看游戏合集
 4. `nuomi samples/snake-wm.nuomi` —— 弹出**真窗口**的彩色贪吃蛇（Win32 后端；方向键/WASD 移动、R 重开、Esc 退出）
 5. （可选）双击 **`make-shortcuts.bat`** 生成带 Nuomi 图标的快捷方式
 
 💾 **不想自己编译？**&#x76F4;接下载预编译版（Windows x64，单一文件）：\*\*[`nuomi.exe`](https://github.com/Ryan-cpu-lang/Nuomi/releases/download/v0.3.0/nuomi.exe)（来自 [Release v0.3.0](https://github.com/Ryan-cpu-lang/Nuomi/releases/tag/v0.3.0)）—— 解释器、编译后端、NUC 工具链都在这一个 exe 里，用 `nuomi nuc` 调用 NUC 命令。
 
+> 🪟 **`nuomiw.exe` 是干什么的？** 它和 `nuomi.exe` 是同一份二进制，`build.bat` 末尾用
+> `tools/make-windowed.py` 复制一份、只把 PE 头子系统字段从 CONSOLE(3) 改成 WINDOWS GUI(2)
+> （顺带清零 CheckSum），两者只差 4 字节。GUI 子系统程序启动时 Windows 不分配控制台窗口，
+> 所以写窗口程序（如 `samples/snake-wm.nuomi`）时用 `nuomiw.exe` 就不会带一个黑色 cmd 框；
+> 需要 `println` 日志、REPL、编译、NUC 子命令时仍用 `nuomi.exe`。
+> 这是 Python `python.exe` / `pythonw.exe` 的同款做法。之所以用「改 PE 头」而不是加
+> `-mwindows` 重链接，是因为链接器切到 GUI 子系统会改选 `WinMainCRTStartup` 入口，
+> 而 Nuomi 用的是标准 `main()`，会直接链接失败；改 PE 头还能兼容 clang / gcc / TCC 三种编译器。
+> 另外 `proc.c` 的 `proc-spawn` 现在统一带 `CREATE_NO_WINDOW`，curl / java 等子进程的
+> 输出照旧走匿名管道读回，但不会再各弹一个黑框。
+>
 > 完整版本历史与各平台预编译包见 [**Releases**](https://github.com/Ryan-cpu-lang/Nuomi/releases) 页面。
 
 ### 🔄 更新 Nuomi
@@ -113,7 +124,7 @@ make test     # 冒烟：全部样例 + NUC 流水线
 │   ├── native.c         # 内置原语总注册（defNative）
 │   ├── json.c           # JSON 解析 / 取值 / 序列化
 │   ├── http.c           # HTTP（http-get / http-download 等，WinINet）
-│   ├── proc.c           # 进程（proc-spawn / proc-run 等）
+│   ├── proc.c           # 进程（proc-spawn / proc-run 等；子进程带 CREATE_NO_WINDOW）
 │   ├── sha1.c           # SHA-1（sha1-string / sha1-file）
 │   ├── zip.c            # 解压 zip/jar（自带 deflate，无 zlib 依赖）
 │   ├── strutil.c        # 字符串工具（str-split / str-replace）
@@ -126,8 +137,8 @@ make test     # 冒烟：全部样例 + NUC 流水线
 ├── samples/             # 示例 22 个：snake-wm.nuomi（窗口贪吃蛇）/ wm-demo.nuomi / snake.nuomi ...
 ├── installer/           # Inno Setup 安装包（Nuomi.iss：文件关联 + PATH + 开始菜单）
 ├── dist/novus/          # 预编译示例 .nuc（诺维斯渠道）+ 源码
-├── dist/windows/        # 预编译 nuomi.exe（入库交付物）
-├── tools/               # gen-icon.py / make-shortcuts.ps1
+├── dist/windows/        # 预编译 nuomi.exe + nuomiw.exe（入库交付物）
+├── tools/               # gen-icon.py / embed-icon.py / make-windowed.py / make-shortcuts.ps1
 ├── docs/                # Nuomi 语言规范（权威）
 ├── Makefile             # Linux/macOS 构建（make / make test）
 ├── build.bat            # Windows 一键构建（clang / gcc / TCC）

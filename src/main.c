@@ -17,8 +17,21 @@ static void setup_console_utf8(void) {
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
 }
+/* GUI 子系统版(nuomiw.exe)启动时不带控制台，stdout/stderr 是无效句柄。
+ * 多数 CRT 会静默丢弃写入，但为消除各家差异（尤其 TCC），统一把标准流
+ * 接到 NUL。判断用 GetStdHandle 而不是 GetConsoleWindow —— 后者是 Win2000
+ * 之后才有的符号，TinyCC 自带的老 kernel32 导入库里没有，会链接失败。
+ * console 版(nuomi.exe)有真实控制台/重定向句柄，非 NULL，直接跳过。 */
+static void setup_windowed_stdio(void) {
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (hOut != NULL && hOut != INVALID_HANDLE_VALUE) return;
+    freopen("NUL", "r", stdin);
+    freopen("NUL", "w", stdout);
+    freopen("NUL", "w", stderr);
+}
 #else
 static void setup_console_utf8(void) { }
+static void setup_windowed_stdio(void) { }
 #endif
 
 /* 由 src/nucutil.c 提供：NUC 工具链子命令（dump/validate/emit-demo/run）。
@@ -194,7 +207,8 @@ int nuomiRealMain(int argc, char** argv) {
 }
 
 static int nuomiRealMainInner(int argc, char** argv) {
-    setup_console_utf8();   /* Windows: 控制台按 UTF-8 输出，修复 REPL 中文标语乱码 */
+    setup_console_utf8();     /* Windows: 控制台按 UTF-8 输出，修复 REPL 中文标语乱码 */
+    setup_windowed_stdio();   /* GUI 版无控制台时把标准流接到 NUL，避免无效句柄写入 */
 
     /* 顶层子命令：version / update —— 不进 REPL、不读脚本，提前返回。
        （放在 newEnv 之前：这两条命令都不需要解释器环境。） */
